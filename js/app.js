@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v4: Motorista + Estoque + Cocção + Higiene)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v5: + Pessoas e acessos)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -9,6 +9,7 @@
  *   temperatura · higienização · recebimento · resultado do recebimento
  *   cocção · resultado da cocção · monitoramento de higiene (v4)
  *   histórico · aprovações e PIN temporário (Admin)
+ *   pessoas e acessos (Admin, v5)
  *
  * A cocção precisa de internet: cada nova medição depende da anterior,
  * por isso ela não entra na fila offline.
@@ -758,6 +759,10 @@
       html += '<button class="cartao-controle ' + (pendentes.length ? '' : 'feito') + '" id="btn-aprovacoes">' +
         '<div class="info"><div class="titulo">Aprovar cadastros</div>' +
         '<div class="detalhe">' + (pendentes.length ? pendentes.length + ' aguardando' : 'Nenhum pendente') + ' · PIN temporário</div></div>' +
+        '<span class="seta">›</span></button>' +
+        '<button class="cartao-controle feito" id="btn-acessos">' +
+        '<div class="info"><div class="titulo">Pessoas e acessos</div>' +
+        '<div class="detalhe">Ligar e desligar os controles de cada pessoa</div></div>' +
         '<span class="seta">›</span></button>';
     }
 
@@ -843,6 +848,8 @@
 
     const btnAprov = $('#btn-aprovacoes');
     if (btnAprov) btnAprov.addEventListener('click', function () { ir('aprovacoes'); });
+    const btnAcessos = $('#btn-acessos');
+    if (btnAcessos) btnAcessos.addEventListener('click', function () { ir('acessos'); });
     $('#btn-historico').addEventListener('click', function () { ir('historico'); });
     $('#btn-trocar-pin').addEventListener('click', function () { ir('trocarPin', { obrigatorio: false }); });
 
@@ -1774,6 +1781,98 @@
       } finally {
         destravarBotao(botao);
       }
+    });
+  };
+
+  // =================================================================
+  // TELA: PESSOAS E ACESSOS (Admin)
+  // =================================================================
+
+  TELAS.acessos = async function () {
+    carregando();
+    const dados = await api('listarAcessos');
+    const grupos = [];
+    dados.opcoes.forEach(function (o) {
+      let g = grupos.filter(function (x) { return x.nome === o.grupo; })[0];
+      if (!g) { g = { nome: o.grupo, opcoes: [] }; grupos.push(g); }
+      g.opcoes.push(o);
+    });
+
+    function chave(idAtivo, controle) { return idAtivo + '|' + controle; }
+    function rotuloAcesso(a) {
+      const o = dados.opcoes.filter(function (x) { return x.id_ativo === a.id_ativo && x.controle === a.controle; })[0];
+      return o ? o.rotulo : a.controle + ' — ' + a.id_ativo;
+    }
+
+    let html = '<h1>Pessoas e acessos</h1>' +
+      '<p class="sub">Toque na pessoa e ligue ou desligue os controles. Cada toque já salva.</p>' +
+      '<div class="campo"><input id="busca" type="search" placeholder="Buscar nome" autocomplete="off"></div>';
+
+    dados.pessoas.forEach(function (p, i) {
+      html += '<div class="card" data-pessoa="' + i + '" data-nome="' + esc(p.nome) + '">' +
+        '<button type="button" class="item-lista" data-abrir="' + i + '" style="border:none;padding:0;min-height:0">' +
+        '<span><strong>' + esc(p.nome) + '</strong><br><span class="sub" style="font-size:14px">' +
+        esc([p.departamentos.join(', '), p.unidades.join(', ')].filter(Boolean).join(' · ')) + '</span></span>' +
+        '<span class="seta">›</span></button>' +
+        '<div class="sub" style="font-size:14px;margin:8px 0 0" data-resumo="' + i + '">' +
+        (p.acessos.length ? esc(p.acessos.map(rotuloAcesso).join(' · ')) : 'Nenhum controle ligado') + '</div>' +
+        '<div data-painel="' + i + '" hidden style="margin-top:12px">' +
+        grupos.map(function (g) {
+          return '<div class="campo"><label>' + esc(g.nome) + '</label><div class="opcoes">' +
+            g.opcoes.map(function (o) {
+              const ligado = p.acessos.some(function (a) { return a.id_ativo === o.id_ativo && a.controle === o.controle; });
+              return '<button type="button" class="opcao' + (ligado ? ' marcada' : '') + '" data-p="' + i + '" data-k="' + esc(chave(o.id_ativo, o.controle)) + '" style="font-size:15px">' +
+                esc(o.rotulo.split(' — ')[1] || o.rotulo) + '</button>';
+            }).join('') +
+            '</div></div>';
+        }).join('') +
+        '</div></div>';
+    });
+
+    app.innerHTML = html;
+
+    $('#busca').addEventListener('input', function () {
+      const termo = $('#busca').value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      $$('[data-pessoa]').forEach(function (c) {
+        const nome = c.getAttribute('data-nome').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+        c.style.display = nome.indexOf(termo) !== -1 ? '' : 'none';
+      });
+    });
+
+    $$('[data-abrir]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const painel = app.querySelector('[data-painel="' + b.getAttribute('data-abrir') + '"]');
+        painel.hidden = !painel.hidden;
+      });
+    });
+
+    $$('.opcao[data-k]').forEach(function (b) {
+      b.addEventListener('click', async function () {
+        if (b.disabled) return;
+        const i = Number(b.getAttribute('data-p'));
+        const pessoa = dados.pessoas[i];
+        const partes = b.getAttribute('data-k').split('|');
+        const ligar = !b.classList.contains('marcada');
+
+        b.disabled = true;
+        b.classList.toggle('marcada', ligar);
+        try {
+          await api('definirAcesso', { id_usuario: pessoa.id, id_ativo: partes[0], controle: partes[1], ligar: ligar });
+          if (ligar) {
+            pessoa.acessos.push({ id_ativo: partes[0], controle: partes[1] });
+          } else {
+            pessoa.acessos = pessoa.acessos.filter(function (a) { return !(a.id_ativo === partes[0] && a.controle === partes[1]); });
+          }
+          app.querySelector('[data-resumo="' + i + '"]').textContent =
+            pessoa.acessos.length ? pessoa.acessos.map(rotuloAcesso).join(' · ') : 'Nenhum controle ligado';
+          toast(primeiroNome(pessoa.nome) + ': ' + (ligar ? 'ligado ' : 'desligado ') + rotuloAcesso({ id_ativo: partes[0], controle: partes[1] }), 'ok');
+        } catch (e) {
+          b.classList.toggle('marcada', !ligar);   // desfaz
+          toast(e.message, 'erro');
+        } finally {
+          b.disabled = false;
+        }
+      });
     });
   };
 
