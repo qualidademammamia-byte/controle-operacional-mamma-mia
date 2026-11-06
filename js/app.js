@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v8: + BPF da produção)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v9: PDF das fichas para Vigilância, clientes e auditorias)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -774,8 +774,8 @@
         '<div class="detalhe">' + resumoQ.ncsAbertas + ' aberta(s)' + (resumoQ.ncsVencidas ? ' · ' + resumoQ.ncsVencidas + ' com prazo vencido' : '') + '</div></div>' +
         '<span class="etiqueta ' + (resumoQ.ncsVencidas ? 'nc' : (resumoQ.ncsAbertas ? 'pendente' : 'feito')) + '">' + resumoQ.ncsAbertas + '</span></button>' +
         '<button class="cartao-controle feito" id="btn-pdf">' +
-        '<div class="info"><div class="titulo">Gerar PDF para a Vigilância</div>' +
-        '<div class="detalhe">Uma ficha por mês, no formato de papel, com as NCs</div></div>' +
+        '<div class="info"><div class="titulo">PDF das fichas</div>' +
+        '<div class="detalhe">Para Vigilância, clientes e auditorias · uma ficha por mês, com as NCs</div></div>' +
         '<span class="seta">›</span></button>';
     }
 
@@ -2135,8 +2135,8 @@
       g.itens.push({ f: f, i: i });
     });
 
-    let html = '<h1>Gerar PDF</h1>' +
-      '<p class="sub">Escolha a ficha e o mês. O PDF fica salvo no Drive, na pasta "Controle Operacional — PDFs".</p>' +
+    let html = '<h1>PDF das fichas</h1>' +
+      '<p class="sub">Para apresentar à Vigilância, a clientes ou em auditorias. Escolha a ficha e o mês. O PDF fica salvo no Drive, na pasta "Controle Operacional — PDFs".</p>' +
       '<div id="msg"></div>' +
       '<div class="campo"><label for="ficha">Ficha</label><select id="ficha">' +
       grupos.map(function (g) {
