@@ -1,13 +1,17 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v2: Motorista + Estoque)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v3: Motorista + Estoque + Cocção)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
  * TELAS
  *   login · pin · cadastro (primeiro acesso) · aguardando aprovação
- *   trocar PIN · início (painel do motorista e do estoque) · temperatura
- *   higienização · recebimento (v2) · resultado do recebimento (v2)
+ *   trocar PIN · início (painéis de motorista, estoque e cocção)
+ *   temperatura · higienização · recebimento · resultado do recebimento
+ *   cocção (v3) · resultado da cocção (v3)
  *   histórico · aprovações e PIN temporário (Admin)
+ *
+ * A cocção precisa de internet: cada nova medição depende da anterior,
+ * por isso ela não entra na fila offline.
  *
  * FILA OFFLINE
  *   Temperatura e higienização feitas sem internet ficam guardadas no
@@ -64,6 +68,7 @@
     EMBALAGEM_DANIFICADA: 'embalagem danificada'
   };
   const NOMES_STATUS = {
+    REMEDIR: 'Medir de novo',
     IMPORTADO: 'Importado',
     CONFORME: 'Conforme',
     NAO_CONFORME: 'Não conforme',
@@ -664,11 +669,13 @@
     const meus = await api('meusDados');
     estado.meusDados = meus;
     const temEstoque = meus.rotinas.some(function (r) { return r.id_modelo === 'REC_MP'; });
+    const temCoccao = meus.rotinas.some(function (r) { return r.id_modelo === 'COC_TEMP'; });
     const temMotorista = meus.rotinas.some(function (r) { return r.id_modelo === 'TEMP_VEICULO' || r.id_modelo === 'HIG_VEICULO'; });
 
-    const [painel, painelEst, pendentes] = await Promise.all([
+    const [painel, painelEst, painelCoc, pendentes] = await Promise.all([
       api('painelMotorista'),
       temEstoque ? api('painelEstoque') : Promise.resolve(null),
+      temCoccao ? api('painelCoccao') : Promise.resolve(null),
       ehAdmin ? api('listarPendentes').catch(function () { return []; }) : Promise.resolve([])
     ]);
 
@@ -696,6 +703,34 @@
               '<div class="quando">' + esc(v.fornecedor || '') + ' · ' + esc(horaBR(r.carimbo_servidor)) +
               (r.valor_num !== null ? ' · ' + esc(String(r.valor_num).replace('.', ',')) + ' °C' : '') + '</div></div>' +
               '<span class="etiqueta ' + (seg ? 'nc' : 'conforme') + '">' + (seg ? 'Segregado' : 'Liberado') + '</span></div>';
+          }).join('') + '</div>';
+      }
+    }
+
+    // Cocção
+    if (painelCoc) {
+      html += '<h2>Cocção</h2>';
+      painelCoc.abertas.forEach(function (c, i) {
+        html += '<button class="cartao-controle" data-coc-aberta="' + i + '">' +
+          '<div class="info"><div class="titulo">' + esc(c.preparacao) + ' — em andamento</div>' +
+          '<div class="detalhe">Início ' + esc(c.hora_inicio) + ' · última ' + esc(String(c.ultima_temperatura).replace('.', ',')) +
+          ' °C · mínimo ' + esc(c.minimo) + ' °C</div></div>' +
+          '<span class="etiqueta pendente">Medir de novo</span></button>';
+      });
+      painelCoc.areas.forEach(function (a, i) {
+        html += '<button class="cartao-controle feito" data-coc-area="' + i + '">' +
+          '<div class="info"><div class="titulo">Nova cocção — ' + esc(a.id_unidade) + '</div>' +
+          '<div class="detalhe">Mínimo ' + esc(painelCoc.minimo) + ' °C no centro geométrico</div></div>' +
+          '<span class="seta">+</span></button>';
+      });
+      if (painelCoc.concluidasHoje.length) {
+        html += '<div class="card"><strong>Cocções de hoje</strong>' +
+          painelCoc.concluidasHoje.map(function (c) {
+            const ok = c.situacao === 'CONCLUIDA';
+            return '<div class="linha-hist"><div>' + esc(c.preparacao) +
+              '<div class="quando">' + esc(c.hora_inicio) + '–' + esc(c.hora_fim) + ' · ' +
+              esc(c.temperaturas.map(function (t) { return String(t.temperatura).replace('.', ','); }).join(' › ')) + ' °C</div></div>' +
+              '<span class="etiqueta ' + (ok ? 'conforme' : 'nc') + '">' + (ok ? 'Conforme' : 'Abaixo do mínimo') + '</span></div>';
           }).join('') + '</div>';
       }
     }
@@ -733,7 +768,7 @@
           '<div class="info"><div class="titulo">' + esc(c.titulo) + '</div><div class="detalhe">' + esc(detalhe) + '</div></div>' +
           '<span class="etiqueta ' + (feito ? 'feito' : 'pendente') + '">' + (feito ? 'Feito' : 'Pendente') + '</span></button>';
       });
-    } else if (!ehAdmin && !painelEst) {
+    } else if (!ehAdmin && !painelEst && !painelCoc) {
       html += aviso('info', 'Nenhum controle liberado para você ainda. Fale com a Qualidade.');
     }
 
@@ -751,6 +786,20 @@
         } else {
           ir('higienizacao', { id_ativo: c.id_ativo, placa: c.placa, tipo: c.tipo, extra: c.situacao === 'FEITO' });
         }
+      });
+    });
+
+    $$('.cartao-controle[data-coc-area]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const a = painelCoc.areas[Number(b.getAttribute('data-coc-area'))];
+        ir('coccao', { id_ativo: a.id_ativo, id_unidade: a.id_unidade });
+      });
+    });
+
+    $$('.cartao-controle[data-coc-aberta]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const c = painelCoc.abertas[Number(b.getAttribute('data-coc-aberta'))];
+        ir('coccao', { id_ativo: c.id_ativo, id_coccao: c.id_coccao, preparacao: c.preparacao, hora_inicio: c.hora_inicio, temperaturas: c.temperaturas, minimo: c.minimo });
       });
     });
 
@@ -1202,6 +1251,172 @@
   };
 
   // =================================================================
+  // TELA: COCÇÃO (nova cocção ou nova medição)
+  // =================================================================
+
+  function horaAgora() {
+    const d = new Date();
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  TELAS.coccao = async function (p) {
+    const continuacao = !!p.id_coccao;
+    let catalogo = { preparacoes: [], minimo: p.minimo || 74 };
+    if (!continuacao) {
+      carregando();
+      catalogo = await api('catalogoCoccao');
+    }
+    const minimo = continuacao ? p.minimo : catalogo.minimo;
+    const idCliente = uuid();
+
+    let html = '<h1>' + (continuacao ? 'Nova medição' : 'Nova cocção') + '</h1>';
+    if (continuacao) {
+      html += '<p class="sub"><strong>' + esc(p.preparacao) + '</strong> · início ' + esc(p.hora_inicio) + '</p>' +
+        '<div class="card"><strong>Medições anteriores</strong>' +
+        (p.temperaturas || []).map(function (t, i) {
+          return '<div class="linha-hist"><div>' + (i + 1) + 'ª medição<div class="quando">' + esc(t.hora || '') + '</div></div>' +
+            '<span class="etiqueta pendente">' + esc(String(t.temperatura).replace('.', ',')) + ' °C</span></div>';
+        }).join('') + '</div>';
+    } else {
+      html += '<p class="sub">Cocção · ' + esc(p.id_unidade || '') + ' · mínimo ' + esc(minimo) + ' °C no centro geométrico</p>';
+    }
+
+    html += '<div id="msg"></div>';
+    if (!continuacao) {
+      html += '<div class="campo"><label for="preparacao">Alimento/Preparação</label>' +
+        '<input id="preparacao" list="lista-preparacoes" autocomplete="off" autocapitalize="characters" placeholder="Digite ou escolha">' +
+        '<datalist id="lista-preparacoes">' + catalogo.preparacoes.map(function (n) { return '<option value="' + esc(n) + '">'; }).join('') + '</datalist></div>' +
+        '<div class="campo"><label for="inicio">Horário de início</label><input id="inicio" type="time" value="' + horaAgora() + '"></div>';
+    }
+    html += '<div class="campo"><label for="temp">Temperatura no centro geométrico (°C)</label>' +
+      '<input id="temp" class="grande" type="text" inputmode="decimal" placeholder="' + esc(minimo) + ',0" autocomplete="off">' +
+      '<div class="ajuda">Meça no ponto mais grosso/central do alimento.</div></div>' +
+      '<div class="campo"><label for="obs">Observação (opcional)</label><textarea id="obs"></textarea></div>' +
+      '<button class="btn btn-principal" id="btn-salvar">Registrar temperatura</button>';
+
+    app.innerHTML = html;
+
+    const campo = $('#temp');
+    campo.addEventListener('input', function () {
+      let v = campo.value.replace(/[^0-9.,]/g, '').replace('.', ',');
+      const partes = v.split(',');
+      if (partes.length > 2) v = partes[0] + ',' + partes.slice(1).join('');
+      campo.value = v;
+    });
+    if (continuacao) campo.focus();
+
+    const botao = $('#btn-salvar');
+    botao.addEventListener('click', async function () {
+      const texto = campo.value.trim();
+      if (!continuacao && !$('#preparacao').value.trim()) { $('#msg').innerHTML = aviso('erro', 'Informe o alimento ou a preparação.'); return; }
+      if (!continuacao && !$('#inicio').value) { $('#msg').innerHTML = aviso('erro', 'Informe o horário de início.'); return; }
+      if (!texto || isNaN(Number(texto.replace(',', '.')))) { $('#msg').innerHTML = aviso('erro', 'Digite a temperatura.'); return; }
+
+      const dados = {
+        id_ativo: p.id_ativo,
+        temperatura: Number(texto.replace(',', '.')),
+        observacao: $('#obs').value,
+        id_cliente: idCliente,
+        hora_informada: new Date().toISOString()
+      };
+      if (continuacao) {
+        dados.id_coccao = p.id_coccao;
+      } else {
+        dados.preparacao = $('#preparacao').value;
+        dados.hora_inicio = $('#inicio').value;
+      }
+
+      travarBotao(botao, 'Registrando…');
+      try {
+        const r = await api('registrarCoccao', dados);
+        estado.pilha.pop();
+        ir('resultadoCoccao', { coccao: r.coccao, id_ativo: p.id_ativo, id_unidade: p.id_unidade, temperaturasAntes: p.temperaturas || [] });
+      } catch (e) {
+        destravarBotao(botao);
+        $('#msg').innerHTML = aviso('erro', ehErroDeRede(e)
+          ? 'Sem internet. A cocção precisa de conexão para registrar. Anote a temperatura e a hora e registre assim que a internet voltar.'
+          : e.message);
+        window.scrollTo(0, 0);
+      }
+    });
+  };
+
+  // =================================================================
+  // TELA: RESULTADO DA COCÇÃO
+  // =================================================================
+
+  TELAS.resultadoCoccao = function (p) {
+    const c = p.coccao;
+    const temps = (p.temperaturasAntes || []).map(function (t) { return t.temperatura; }).concat([c.temperatura]);
+    const sequencia = temps.map(function (t) { return String(t).replace('.', ','); }).join(' › ') + ' °C';
+
+    let html;
+    if (c.atingiu) {
+      html = '<h1>Conforme</h1>' +
+        '<div class="aviso ok" style="font-size:20px;text-align:center"><strong>' + esc(c.preparacao) + '</strong><br>' +
+        esc(String(c.temperatura).replace('.', ',')) + ' °C · atingiu o mínimo de ' + esc(c.minimo) + ' °C.<br>Cocção concluída.</div>' +
+        '<p class="sub" style="text-align:center">' + esc(c.hora_inicio) + '–' + esc(c.hora_fim) + ' · ' + esc(sequencia) + '</p>' +
+        '<button class="btn btn-principal" id="btn-nova">Nova cocção</button>' +
+        '<button class="btn btn-secundario" id="btn-inicio">Voltar ao início</button>';
+    } else {
+      html = '<h1>Continue a cocção</h1>' +
+        '<div class="aviso alerta" style="font-size:20px;text-align:center"><strong>' + esc(c.preparacao) + '</strong><br>' +
+        esc(String(c.temperatura).replace('.', ',')) + ' °C · abaixo do mínimo de ' + esc(c.minimo) + ' °C.<br>Continue cozinhando e meça de novo.</div>' +
+        '<p class="sub" style="text-align:center">' + c.numero_medicao + 'ª medição · ' + esc(sequencia) + '</p>' +
+        '<button class="btn btn-principal" id="btn-medir">Medir de novo</button>' +
+        '<button class="btn btn-secundario" id="btn-inicio">Voltar ao início (a cocção fica aberta)</button>' +
+        '<button class="btn-link" id="btn-encerrar" style="color:var(--vermelho)">Encerrar sem atingir ' + esc(c.minimo) + ' °C</button>' +
+        '<div id="bloco-encerrar" hidden class="card" style="margin-top:8px">' +
+        '<div id="msg-enc"></div>' +
+        '<div class="campo"><label for="obs-enc">Por que a cocção foi encerrada abaixo do mínimo?</label><textarea id="obs-enc"></textarea></div>' +
+        '<button class="btn btn-perigo" id="btn-confirmar-enc">Confirmar encerramento (vai para a Qualidade)</button></div>';
+    }
+    app.innerHTML = html;
+
+    $('#btn-inicio').addEventListener('click', function () { irRaiz('inicio'); });
+
+    const btnNova = $('#btn-nova');
+    if (btnNova) btnNova.addEventListener('click', function () {
+      estado.pilha.pop();
+      ir('coccao', { id_ativo: p.id_ativo, id_unidade: p.id_unidade });
+    });
+
+    const btnMedir = $('#btn-medir');
+    if (btnMedir) btnMedir.addEventListener('click', function () {
+      estado.pilha.pop();
+      ir('coccao', {
+        id_ativo: p.id_ativo,
+        id_unidade: p.id_unidade,
+        id_coccao: c.id_coccao,
+        preparacao: c.preparacao,
+        hora_inicio: c.hora_inicio,
+        minimo: c.minimo,
+        temperaturas: (p.temperaturasAntes || []).concat([{ temperatura: c.temperatura, hora: c.hora_fim }])
+      });
+    });
+
+    const btnEnc = $('#btn-encerrar');
+    if (btnEnc) btnEnc.addEventListener('click', function () {
+      $('#bloco-encerrar').hidden = false;
+      btnEnc.hidden = true;
+      $('#obs-enc').focus();
+    });
+
+    const btnConf = $('#btn-confirmar-enc');
+    if (btnConf) btnConf.addEventListener('click', async function () {
+      travarBotao(btnConf, 'Encerrando…');
+      try {
+        await api('encerrarCoccaoAbaixo', { id_coccao: c.id_coccao, observacao: $('#obs-enc').value, id_cliente: uuid() });
+        toast('Cocção encerrada abaixo do mínimo. Enviada para a Qualidade.', 'erro');
+        irRaiz('inicio');
+      } catch (e) {
+        destravarBotao(btnConf);
+        $('#msg-enc').innerHTML = aviso('erro', e.message);
+      }
+    });
+  };
+
+  // =================================================================
   // TELA: HISTÓRICO
   // =================================================================
 
@@ -1233,6 +1448,9 @@
         let titulo;
         if (r.id_modelo === 'TEMP_VEICULO') {
           titulo = 'Temperatura ' + (r.turno === 'MANHA' ? 'manhã' : 'tarde') + ' · ' + String(r.valor_num).replace('.', ',') + ' °C';
+        } else if (r.id_modelo === 'COC_TEMP') {
+          titulo = 'Cocção ' + (r.valores.preparacao || '') + ' · ' + String(r.valor_num).replace('.', ',') + ' °C' +
+            (r.valores.encerramento ? ' (encerrada)' : r.valores.numero_medicao > 1 ? ' (' + r.valores.numero_medicao + 'ª medição)' : '');
         } else if (r.id_modelo === 'REC_MP') {
           titulo = 'Recebimento ' + (r.valores.produto || '') +
             (r.valor_num !== null ? ' · ' + String(r.valor_num).replace('.', ',') + ' °C' : '') +
@@ -1240,7 +1458,7 @@
         } else {
           titulo = 'Higienização ' + (r.valores.tipo === 'BAU' ? 'baú' : 'cabine') + (r.valores.motivo === 'EXTRA' ? ' (extra)' : r.valores.motivo === 'REINSPECAO' ? ' (reinspeção)' : '');
         }
-        const classe = String(r.status).toLowerCase().replace('aguardando_verificacao', 'aguardando');
+        const classe = String(r.status).toLowerCase().replace('aguardando_verificacao', 'aguardando').replace('remedir', 'pendente').replace('importado', 'substituido');
         return '<div class="linha-hist"><div>' + esc(titulo) +
           '<div class="quando">' + esc(dataBR(r.data_ref)) + (horaBR(r.carimbo_servidor) ? ' · ' + esc(horaBR(r.carimbo_servidor)) : '') + '</div></div>' +
           '<span class="etiqueta ' + esc(classe) + '">' + esc(NOMES_STATUS[r.status] || r.status) + '</span></div>';
