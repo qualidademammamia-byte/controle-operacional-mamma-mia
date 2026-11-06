@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v5: + Pessoas e acessos)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v6: + Fila de verificação e NCs)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -10,6 +10,7 @@
  *   cocção · resultado da cocção · monitoramento de higiene (v4)
  *   histórico · aprovações e PIN temporário (Admin)
  *   pessoas e acessos (Admin, v5)
+ *   fila de verificação · NCs · avançar NC (Qualidade, v6)
  *
  * A cocção precisa de internet: cada nova medição depende da anterior,
  * por isso ela não entra na fila offline.
@@ -674,12 +675,14 @@
     const temHigiene = meus.rotinas.some(function (r) { return r.id_modelo === 'MON_HIGIENE'; });
     const temMotorista = meus.rotinas.some(function (r) { return r.id_modelo === 'TEMP_VEICULO' || r.id_modelo === 'HIG_VEICULO'; });
 
-    const [painel, painelEst, painelCoc, painelHig, pendentes] = await Promise.all([
+    const ehQualidade = temPerfil('QUALIDADE');
+    const [painel, painelEst, painelCoc, painelHig, pendentes, resumoQ] = await Promise.all([
       api('painelMotorista'),
       temEstoque ? api('painelEstoque') : Promise.resolve(null),
       temCoccao ? api('painelCoccao') : Promise.resolve(null),
       temHigiene ? api('painelHigiene') : Promise.resolve(null),
-      ehAdmin ? api('listarPendentes').catch(function () { return []; }) : Promise.resolve([])
+      ehAdmin ? api('listarPendentes').catch(function () { return []; }) : Promise.resolve([]),
+      ehQualidade ? api('resumoQualidade').catch(function () { return null; }) : Promise.resolve(null)
     ]);
 
     let html = '<h1>Olá, ' + esc(primeiroNome(meus.nome)) + '</h1>' +
@@ -752,6 +755,18 @@
               '<span class="etiqueta ' + (ok ? 'conforme' : 'nc') + '">' + (ok ? 'Conforme' : 'Abaixo do mínimo') + '</span></div>';
           }).join('') + '</div>';
       }
+    }
+
+    // Qualidade: fila e NCs
+    if (resumoQ) {
+      html += '<button class="cartao-controle ' + (resumoQ.fila ? '' : 'feito') + '" id="btn-fila">' +
+        '<div class="info"><div class="titulo">Fila de verificação</div>' +
+        '<div class="detalhe">' + (resumoQ.fila ? resumoQ.fila + ' registro(s) aguardando você' : 'Nada aguardando') + '</div></div>' +
+        '<span class="etiqueta ' + (resumoQ.fila ? 'aguardando' : 'feito') + '">' + resumoQ.fila + '</span></button>' +
+        '<button class="cartao-controle ' + (resumoQ.ncsVencidas ? 'nc' : (resumoQ.ncsAbertas ? '' : 'feito')) + '" id="btn-ncs">' +
+        '<div class="info"><div class="titulo">Não conformidades</div>' +
+        '<div class="detalhe">' + resumoQ.ncsAbertas + ' aberta(s)' + (resumoQ.ncsVencidas ? ' · ' + resumoQ.ncsVencidas + ' com prazo vencido' : '') + '</div></div>' +
+        '<span class="etiqueta ' + (resumoQ.ncsVencidas ? 'nc' : (resumoQ.ncsAbertas ? 'pendente' : 'feito')) + '">' + resumoQ.ncsAbertas + '</span></button>';
     }
 
     // Admin
@@ -850,6 +865,10 @@
     if (btnAprov) btnAprov.addEventListener('click', function () { ir('aprovacoes'); });
     const btnAcessos = $('#btn-acessos');
     if (btnAcessos) btnAcessos.addEventListener('click', function () { ir('acessos'); });
+    const btnFila = $('#btn-fila');
+    if (btnFila) btnFila.addEventListener('click', function () { ir('fila'); });
+    const btnNcs = $('#btn-ncs');
+    if (btnNcs) btnNcs.addEventListener('click', function () { ir('ncs', { situacao: 'ABERTAS' }); });
     $('#btn-historico').addEventListener('click', function () { ir('historico'); });
     $('#btn-trocar-pin').addEventListener('click', function () { ir('trocarPin', { obrigatorio: false }); });
 
@@ -1873,6 +1892,214 @@
           b.disabled = false;
         }
       });
+    });
+  };
+
+  // =================================================================
+  // TELA: FILA DE VERIFICAÇÃO (Qualidade)
+  // =================================================================
+
+  TELAS.fila = async function () {
+    carregando();
+    const fila = await api('filaVerificacao');
+
+    let html = '<h1>Fila de verificação</h1>' +
+      '<p class="sub">C aceita e fecha o registro. N/C abre uma não conformidade.</p><div id="msg"></div>';
+    if (!fila.length) {
+      app.innerHTML = html + aviso('ok', 'Nada aguardando verificação.');
+      return;
+    }
+
+    fila.forEach(function (r, i) {
+      html += '<div class="card" data-reg="' + i + '">' +
+        '<div style="display:flex;justify-content:space-between;gap:10px"><strong>' + esc(r.modelo) + '</strong>' +
+        '<span class="etiqueta aguardando">' + esc(dataBR(r.data_ref)) + '</span></div>' +
+        '<div style="font-size:18px;margin:6px 0">' + esc(r.titulo) + '</div>' +
+        '<div class="sub" style="margin:0 0 6px;font-size:14px">' + esc(r.detalhe) + '</div>' +
+        '<div class="sub" style="margin:0;font-size:14px">' + esc(r.ativo) + ' · ' + esc(r.id_unidade) + ' · ' + esc(r.autor_nome) + (r.carimbo ? ' · ' + esc(r.carimbo) : '') + '</div>' +
+        (r.observacao ? '<div class="aviso info" style="margin:10px 0 0">Obs.: ' + esc(r.observacao) + '</div>' : '') +
+        (r.evidencia_url ? '<a href="' + esc(r.evidencia_url) + '" target="_blank" rel="noopener" class="btn-link" style="display:block;text-align:left">Ver foto</a>' : '') +
+        (r.reinspecao_de ? '<div class="aviso alerta" style="margin:10px 0 0">Reinspeção da ' + esc(r.reinspecao_de) + '</div>' : '');
+
+      if (r.proprio) {
+        html += aviso('alerta', 'Você registrou este item. Outra pessoa da Qualidade precisa verificar.');
+      } else {
+        html += '<div class="opcoes" style="margin-top:12px">' +
+          '<button type="button" class="btn btn-principal" data-c="' + i + '" style="margin:0">C — Conforme</button>' +
+          '<button type="button" class="btn btn-perigo" data-nc="' + i + '" style="margin:0">N/C</button></div>' +
+          '<div data-nc-form="' + i + '" hidden style="margin-top:12px">' +
+          '<div class="campo"><label>Não conformidade</label><textarea data-desc="' + i + '" style="min-height:64px"></textarea></div>' +
+          '<div class="campo"><label>Ação imediata</label><textarea data-ai="' + i + '" style="min-height:64px"></textarea></div>' +
+          '<div class="campo"><label>Responsável pela ação imediata</label><input data-resp="' + i + '" autocomplete="off" value="' + esc(r.autor_nome) + '"></div>' +
+          '<button type="button" class="btn btn-perigo" data-confirmar-nc="' + i + '">Abrir não conformidade</button></div>' +
+          '<div data-erro="' + i + '"></div>';
+      }
+      html += '</div>';
+    });
+    app.innerHTML = html;
+
+    async function decidir(i, resultado, botao) {
+      const r = fila[i];
+      const dados = { id_registro: r.id_registro, resultado: resultado };
+      if (resultado === 'NC') {
+        dados.descricao = app.querySelector('[data-desc="' + i + '"]').value;
+        dados.acao_imediata = app.querySelector('[data-ai="' + i + '"]').value;
+        dados.resp_acao_imediata = app.querySelector('[data-resp="' + i + '"]').value;
+      }
+      travarBotao(botao, 'Salvando…');
+      try {
+        const res = await api('verificarRegistro', dados);
+        toast(resultado === 'C' ? 'Verificado: Conforme.' : 'NC aberta: ' + res.nc.id_nc, resultado === 'C' ? 'ok' : 'erro');
+        render();
+      } catch (e) {
+        destravarBotao(botao);
+        app.querySelector('[data-erro="' + i + '"]').innerHTML = aviso('erro', e.message);
+      }
+    }
+
+    $$('[data-c]').forEach(function (b) {
+      b.addEventListener('click', function () { decidir(Number(b.getAttribute('data-c')), 'C', b); });
+    });
+    $$('[data-nc]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const form = app.querySelector('[data-nc-form="' + b.getAttribute('data-nc') + '"]');
+        form.hidden = !form.hidden;
+      });
+    });
+    $$('[data-confirmar-nc]').forEach(function (b) {
+      b.addEventListener('click', function () { decidir(Number(b.getAttribute('data-confirmar-nc')), 'NC', b); });
+    });
+  };
+
+  // =================================================================
+  // TELA: NÃO CONFORMIDADES (Qualidade)
+  // =================================================================
+
+  const NOMES_ETAPA = {
+    VERIFICAR_AI: 'Verificar ação imediata',
+    PLANEJAR: 'Planejar ação',
+    EFICACIA: 'Avaliar eficácia',
+    ENCERRADA: 'Encerrada'
+  };
+
+  TELAS.ncs = async function (p) {
+    carregando();
+    const situacao = p.situacao || 'ABERTAS';
+    const lista = await api('listarNcs', { situacao: situacao });
+
+    let html = '<h1>Não conformidades</h1>' +
+      htmlOpcoes('situacao', [['ABERTAS', 'Abertas'], ['ENCERRADAS', 'Encerradas (60 dias)']], [situacao]) +
+      '<div style="height:12px"></div>';
+
+    if (!lista.length) {
+      html += aviso('ok', situacao === 'ABERTAS' ? 'Nenhuma NC aberta.' : 'Nenhuma NC encerrada nos últimos 60 dias.');
+    }
+
+    lista.forEach(function (n, i) {
+      const classe = n.prazo_vencido ? 'nc' : (n.etapa === 'ENCERRADA' ? 'feito' : '');
+      html += '<button class="cartao-controle ' + classe + '" data-abrir-nc="' + i + '" style="align-items:flex-start">' +
+        '<div class="info"><div class="titulo">' + esc(n.id_nc) + ' · ' + esc(n.origem) + ' · ' + esc(n.id_unidade) + '</div>' +
+        '<div style="font-size:15px;margin:4px 0">' + esc(n.item) + '</div>' +
+        '<div class="detalhe">' + esc(n.descricao) + '</div>' +
+        '<div class="detalhe">Aberta em ' + esc(dataBR(n.aberta_em)) +
+        (n.prazo ? ' · prazo ' + esc(dataBR(n.prazo)) + (n.prazo_vencido ? ' (VENCIDO)' : '') : '') + '</div></div>' +
+        '<span class="etiqueta ' + (n.etapa === 'ENCERRADA' ? 'feito' : (n.prazo_vencido ? 'nc' : 'pendente')) + '">' + esc(NOMES_ETAPA[n.etapa] || n.etapa) + '</span></button>';
+    });
+    app.innerHTML = html;
+
+    ligarOpcoes('situacao', false, function () {
+      estado.pilha[estado.pilha.length - 1].params = { situacao: valorOpcao('situacao') };
+      render();
+    });
+    $$('[data-abrir-nc]').forEach(function (b) {
+      b.addEventListener('click', function () { ir('nc', { nc: lista[Number(b.getAttribute('data-abrir-nc'))] }); });
+    });
+  };
+
+  // =================================================================
+  // TELA: UMA NC (detalhe + próxima etapa)
+  // =================================================================
+
+  TELAS.nc = function (p) {
+    const n = p.nc;
+    const linha = function (rotulo, valor) {
+      return valor ? '<div class="linha-hist"><div class="quando" style="min-width:120px">' + esc(rotulo) + '</div><div style="flex:1;text-align:right">' + esc(valor) + '</div></div>' : '';
+    };
+
+    let html = '<h1>' + esc(n.id_nc) + '</h1>' +
+      '<p class="sub">' + esc(n.origem) + ' · ' + esc(n.id_unidade) + ' · aberta em ' + esc(dataBR(n.aberta_em)) + ' por ' + esc(n.aberta_por) + '</p>' +
+      '<div class="card">' +
+      linha('Item', n.item) +
+      linha('Não conformidade', n.descricao) +
+      linha('Ação imediata', n.acao_imediata + (n.resp_acao_imediata ? ' (' + n.resp_acao_imediata + ')' : '')) +
+      linha('Verificação AI', n.verificacao_ai === 'A' ? 'Atendida' : '') +
+      linha('Ação planejada', n.acao_planejada ? n.acao_planejada + ' (' + n.resp_acao_planejada + ')' : '') +
+      linha('Prazo', n.prazo ? dataBR(n.prazo) + (n.prazo_vencido ? ' — VENCIDO' : '') : '') +
+      linha('Eficácia', n.eficacia === 'E' ? 'Eficiente' : '') +
+      linha('Encerrada em', n.encerrada_em ? dataBR(n.encerrada_em) : '') +
+      '</div><div id="msg"></div>';
+
+    const campoPlano = function (prefixo) {
+      return '<div class="campo"><label>' + prefixo + 'Ação planejada</label><textarea id="plano"></textarea></div>' +
+        '<div class="campo"><label>Responsável</label><input id="resp-plano" autocomplete="off"></div>' +
+        '<div class="campo"><label>Prazo</label><input id="prazo" type="date" min="' + hojeISO() + '"></div>';
+    };
+
+    if (n.etapa === 'VERIFICAR_AI') {
+      html += '<h2>Verificação da ação imediata</h2>' +
+        htmlOpcoes('res', [['A', 'A — Atendida'], ['NA', 'NA — Não Atendida']]) +
+        '<div id="bloco-na" hidden style="margin-top:12px">' +
+        '<div class="campo"><label>Nova ação imediata</label><textarea id="nova-ai"></textarea></div>' +
+        '<div class="campo"><label>Responsável</label><input id="resp-ai" autocomplete="off"></div></div>';
+    } else if (n.etapa === 'PLANEJAR') {
+      html += '<h2>Ação planejada</h2>' + campoPlano('');
+    } else if (n.etapa === 'EFICACIA') {
+      html += '<h2>Eficácia da ação planejada</h2>';
+      if (n.exige_reinspecao && n.reinspecao_status !== 'CONFORME') {
+        html += aviso('alerta', n.id_reinspecao
+          ? 'A reinspeção (' + n.id_reinspecao + ') ainda não foi verificada como C na fila.'
+          : 'Esta NC exige reinspeção: o motorista precisa refazer a higienização pelo app (cartão "Refazer").');
+      }
+      html += htmlOpcoes('res', [['E', 'E — Eficiente'], ['NE', 'NE — Não Eficiente']]) +
+        '<div id="bloco-ne" hidden style="margin-top:12px">' + campoPlano('Nova ') + '</div>';
+    }
+
+    if (n.etapa !== 'ENCERRADA') {
+      html += '<button class="btn btn-principal" id="btn-salvar">Salvar</button>';
+    }
+    app.innerHTML = html;
+    if (n.etapa === 'ENCERRADA') return;
+
+    if (n.etapa === 'VERIFICAR_AI') ligarOpcoes('res', false, function () { $('#bloco-na').hidden = valorOpcao('res') !== 'NA'; });
+    if (n.etapa === 'EFICACIA') ligarOpcoes('res', false, function () { $('#bloco-ne').hidden = valorOpcao('res') !== 'NE'; });
+
+    const botao = $('#btn-salvar');
+    botao.addEventListener('click', async function () {
+      const dados = { id_nc: n.id_nc, etapa: n.etapa };
+      if (n.etapa === 'VERIFICAR_AI' || n.etapa === 'EFICACIA') {
+        dados.resultado = valorOpcao('res');
+        if (!dados.resultado) { $('#msg').innerHTML = aviso('erro', 'Escolha uma opção.'); return; }
+      }
+      if (n.etapa === 'VERIFICAR_AI' && dados.resultado === 'NA') {
+        dados.nova_acao_imediata = $('#nova-ai').value;
+        dados.resp_acao_imediata = $('#resp-ai').value;
+      }
+      if (n.etapa === 'PLANEJAR' || (n.etapa === 'EFICACIA' && dados.resultado === 'NE')) {
+        dados.acao_planejada = $('#plano').value;
+        dados.resp_acao_planejada = $('#resp-plano').value;
+        dados.prazo = $('#prazo').value;
+      }
+
+      travarBotao(botao, 'Salvando…');
+      try {
+        const r = await api('avancarNc', dados);
+        toast(r.status === 'ENCERRADA' ? n.id_nc + ' encerrada.' : n.id_nc + ': ' + (NOMES_ETAPA[r.etapa] || r.etapa) + '.', 'ok');
+        voltar();
+      } catch (e) {
+        destravarBotao(botao);
+        $('#msg').innerHTML = aviso('erro', e.message);
+        window.scrollTo(0, 0);
+      }
     });
   };
 
