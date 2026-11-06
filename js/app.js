@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v7: + PDFs para a Vigilância)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v8: + BPF da produção)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -12,6 +12,7 @@
  *   pessoas e acessos (Admin, v5)
  *   fila de verificação · NCs · avançar NC (Qualidade, v6)
  *   gerar PDF por ficha e mês (Qualidade, v7)
+ *   BPF da produção usa a mesma tela de checklist do monitoramento (v8)
  *
  * A cocção precisa de internet: cada nova medição depende da anterior,
  * por isso ela não entra na fila offline.
@@ -673,7 +674,7 @@
     estado.meusDados = meus;
     const temEstoque = meus.rotinas.some(function (r) { return r.id_modelo === 'REC_MP'; });
     const temCoccao = meus.rotinas.some(function (r) { return r.id_modelo === 'COC_TEMP'; });
-    const temHigiene = meus.rotinas.some(function (r) { return r.id_modelo === 'MON_HIGIENE'; });
+    const temHigiene = meus.rotinas.some(function (r) { return r.id_modelo === 'MON_HIGIENE' || r.id_modelo === 'BPF_PRODUCAO'; });
     const temMotorista = meus.rotinas.some(function (r) { return r.id_modelo === 'TEMP_VEICULO' || r.id_modelo === 'HIG_VEICULO'; });
 
     const ehQualidade = temPerfil('QUALIDADE');
@@ -690,17 +691,21 @@
       '<p class="sub">' + esc(dataBR(painel.hoje)) +
       (temMotorista ? ' · semana de ' + esc(dataBR(painel.semana.inicio)) + ' a ' + esc(dataBR(painel.semana.fim)) : '') + '</p>';
 
-    // Monitoramento de higiene
+    // Checklists: monitoramento de higiene e BPF da produção
     if (painelHig) {
-      html += '<h2>Monitoramento de higiene</h2>';
+      let tituloAtual = '';
+      // Monitoramento primeiro, depois BPF (agrupa os cartões por checklist)
+      painelHig.areas.sort(function (x, y) { return (x.id_modelo === 'BPF_PRODUCAO') - (y.id_modelo === 'BPF_PRODUCAO'); });
       painelHig.areas.forEach(function (a, i) {
+        const nome = a.nome || 'Monitoramento de higiene';
+        if (nome !== tituloAtual) { html += '<h2>' + esc(nome) + '</h2>'; tituloAtual = nome; }
         const feitas = a.verificacoes.filter(function (v) { return v.feita; }).length;
         const detalhe = a.verificacoes.map(function (v) {
           return v.verificacao + 'ª ' + (v.feita ? '✓ ' + v.hora_inicio + '–' + v.hora_fim : 'pendente');
         }).join(' · ') + (a.ncsAbertas ? ' · ' + a.ncsAbertas + ' NC(s) aberta(s)' : '');
         const tudoFeito = feitas === a.verificacoes.length;
         html += '<button class="cartao-controle ' + (a.ncsAbertas ? 'nc' : (tudoFeito ? 'feito' : '')) + '" data-hig="' + i + '">' +
-          '<div class="info"><div class="titulo">Monitoramento — ' + esc(a.id_unidade) + '</div>' +
+          '<div class="info"><div class="titulo">' + esc(a.id_modelo === 'BPF_PRODUCAO' ? 'BPF' : 'Monitoramento') + ' — ' + esc(a.id_unidade) + '</div>' +
           '<div class="detalhe">' + esc(detalhe) + '</div></div>' +
           '<span class="etiqueta ' + (tudoFeito ? 'feito' : 'pendente') + '">' + feitas + '/' + a.verificacoes.length + '</span></button>';
       });
@@ -835,7 +840,7 @@
     $$('.cartao-controle[data-hig]').forEach(function (b) {
       b.addEventListener('click', function () {
         const a = painelHig.areas[Number(b.getAttribute('data-hig'))];
-        ir('monitoramento', { id_ativo: a.id_ativo, id_unidade: a.id_unidade });
+        ir('monitoramento', { id_ativo: a.id_ativo, id_unidade: a.id_unidade, id_modelo: a.id_modelo || 'MON_HIGIENE' });
       });
     });
 
@@ -1480,14 +1485,15 @@
 
   TELAS.monitoramento = async function (p) {
     carregando();
-    const dados = await api('checklistHigiene', { id_ativo: p.id_ativo });
+    const idModelo = p.id_modelo || 'MON_HIGIENE';
+    const dados = await api('checklistHigiene', { id_ativo: p.id_ativo, id_modelo: idModelo });
     const horaInicio = horaAgora();       // início = quando o checklist foi aberto
     const idCliente = uuid();
     const pendentesHoje = dados.hoje.filter(function (v) { return !v.feita; });
     const totalItens = dados.setores.reduce(function (n, s) { return n + s.itens.length; }, 0);
 
     const estiloBtn = 'min-height:44px;padding:6px;font-size:15px';
-    let html = '<h1>Monitoramento de higiene</h1>' +
+    let html = '<h1>' + esc(dados.nome || 'Monitoramento de higiene') + '</h1>' +
       '<p class="sub">' + esc(p.id_unidade || '') + ' · início ' + esc(horaInicio) + ' · C = Conforme · NC = Não Conforme · SA = Sem Atividade</p>';
 
     if (!pendentesHoje.length) {
@@ -1607,6 +1613,7 @@
       travarBotao(botao, 'Registrando…');
       try {
         const r = await enviarRegistro('registrarHigiene', {
+          id_modelo: idModelo,
           id_ativo: p.id_ativo,
           verificacao: Number(valorOpcao('verif')),
           hora_inicio: horaInicio,
@@ -1653,7 +1660,7 @@
             : item.acao === 'registrarRecebimento'
               ? 'Recebimento ' + String(d.produto || '').toUpperCase()
               : item.acao === 'registrarHigiene'
-                ? 'Monitoramento ' + d.verificacao + 'ª verificação'
+                ? (d.id_modelo === 'BPF_PRODUCAO' ? 'BPF ' : 'Monitoramento ') + d.verificacao + 'ª verificação'
                 : 'Higienização ' + (d.tipo === 'BAU' ? 'baú' : 'cabine');
           return '<div class="linha-hist"><div>' + esc(titulo) + '<div class="quando">' + esc(new Date(item.guardado_em).toLocaleString('pt-BR')) + '</div></div>' +
             '<span class="etiqueta pendente">Não enviado</span></div>';
@@ -1667,9 +1674,9 @@
         let titulo;
         if (r.id_modelo === 'TEMP_VEICULO') {
           titulo = 'Temperatura ' + (r.turno === 'MANHA' ? 'manhã' : 'tarde') + ' · ' + String(r.valor_num).replace('.', ',') + ' °C';
-        } else if (r.id_modelo === 'MON_HIGIENE') {
+        } else if (r.id_modelo === 'MON_HIGIENE' || r.id_modelo === 'BPF_PRODUCAO') {
           const t = r.valores.totais || {};
-          titulo = 'Monitoramento ' + (r.valores.verificacao || r.turno) + 'ª verificação · ' + (t.C || 0) + ' C · ' + (t.NC || 0) + ' NC · ' + (t.SA || 0) + ' SA';
+          titulo = (r.id_modelo === 'BPF_PRODUCAO' ? 'BPF ' : 'Monitoramento ') + (r.valores.verificacao || r.turno) + 'ª verificação · ' + (t.C || 0) + ' C · ' + (t.NC || 0) + ' NC · ' + (t.SA || 0) + ' SA';
         } else if (r.id_modelo === 'COC_TEMP') {
           titulo = 'Cocção ' + (r.valores.preparacao || '') + ' · ' + String(r.valor_num).replace('.', ',') + ' °C' +
             (r.valores.encerramento ? ' (encerrada)' : r.valores.numero_medicao > 1 ? ' (' + r.valores.numero_medicao + 'ª medição)' : '');
