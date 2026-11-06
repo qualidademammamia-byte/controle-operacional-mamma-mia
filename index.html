@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1b1d24">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Mamma Mia · Controle Operacional</title>
+
+  <!--
+    MAMMA MIA CONTROLE OPERACIONAL — index.html (Entrega 5a)
+    Estrutura e visual do app. As telas são desenhadas pelo js/app.js
+    dentro de <main id="app">.
+  -->
+
+  <style>
+    :root {
+      --escuro: #1b1d24;
+      --escuro-2: #262934;
+      --dourado: #c49a54;
+      --dourado-claro: #f3e9d8;
+      --fundo: #f4f3f0;
+      --branco: #ffffff;
+      --texto: #1b1d24;
+      --texto-suave: #6b6e78;
+      --borda: #dcdad4;
+      --verde: #2e7d4f;
+      --verde-claro: #e3f2e8;
+      --ambar: #b26a00;
+      --ambar-claro: #fdf0dc;
+      --vermelho: #b3261e;
+      --vermelho-claro: #fbe9e7;
+      --azul: #1f5fa8;
+      --azul-claro: #e6f0fb;
+      --raio: 14px;
+      --sombra: 0 1px 2px rgba(0, 0, 0, .06), 0 2px 8px rgba(0, 0, 0, .05);
+      --toque: 56px; /* altura mínima de botões e campos */
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--fundo);
+      color: var(--texto);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 17px;
+      line-height: 1.45;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ---------- Cabeçalho ---------- */
+    .topo {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--escuro);
+      color: var(--branco);
+      padding: calc(12px + env(safe-area-inset-top)) 16px 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .topo .marca { font-weight: 700; letter-spacing: .3px; flex: 1; min-width: 0; }
+    .topo .marca small {
+      display: block;
+      font-weight: 500;
+      font-size: 13px;
+      color: var(--dourado);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .topo button {
+      background: transparent;
+      color: var(--branco);
+      border: 1px solid rgba(255, 255, 255, .25);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    .topo .voltar { font-size: 20px; padding: 6px 12px; }
+
+    /* ---------- Barra offline ---------- */
+    .faixa-offline {
+      display: none;
+      background: var(--ambar-claro);
+      color: var(--ambar);
+      font-size: 15px;
+      font-weight: 600;
+      padding: 10px 16px;
+      text-align: center;
+      border-bottom: 1px solid #f0d9b3;
+    }
+    .faixa-offline.visivel { display: block; }
+
+    /* ---------- Conteúdo ---------- */
+    main {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 16px 16px calc(32px + env(safe-area-inset-bottom));
+    }
+
+    h1 { font-size: 24px; margin: 8px 0 4px; }
+    h2 { font-size: 19px; margin: 24px 0 10px; }
+    .sub { color: var(--texto-suave); margin: 0 0 16px; }
+
+    .card {
+      background: var(--branco);
+      border: 1px solid var(--borda);
+      border-radius: var(--raio);
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: var(--sombra);
+    }
+
+    /* ---------- Campos ---------- */
+    .campo { margin-bottom: 16px; }
+    .campo label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .campo .ajuda { font-size: 14px; color: var(--texto-suave); margin-top: 4px; }
+
+    input, select, textarea {
+      width: 100%;
+      min-height: var(--toque);
+      padding: 12px 14px;
+      font-size: 18px;
+      border: 1.5px solid var(--borda);
+      border-radius: 12px;
+      background: var(--branco);
+      color: var(--texto);
+      font-family: inherit;
+    }
+    textarea { min-height: 96px; resize: vertical; }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--dourado);
+      box-shadow: 0 0 0 3px rgba(196, 154, 84, .25);
+    }
+    input.grande {
+      font-size: 34px;
+      font-weight: 700;
+      text-align: center;
+      letter-spacing: 1px;
+    }
+    input.pin {
+      font-size: 30px;
+      letter-spacing: 14px;
+      text-align: center;
+    }
+
+    /* ---------- Opções em botão (turno, baú/cabine, C/NC...) ---------- */
+    .opcoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+    .opcao {
+      min-height: var(--toque);
+      border: 1.5px solid var(--borda);
+      background: var(--branco);
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--texto);
+      cursor: pointer;
+      padding: 10px;
+    }
+    .opcao.marcada {
+      border-color: var(--escuro);
+      background: var(--escuro);
+      color: var(--branco);
+    }
+
+    /* ---------- Botões ---------- */
+    .btn {
+      display: block;
+      width: 100%;
+      min-height: var(--toque);
+      border: none;
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      padding: 14px 16px;
+      margin-top: 8px;
+    }
+    .btn-principal { background: var(--escuro); color: var(--branco); }
+    .btn-secundario { background: var(--branco); color: var(--texto); border: 1.5px solid var(--borda); }
+    .btn-perigo { background: var(--vermelho); color: var(--branco); }
+    .btn-link {
+      background: none;
+      border: none;
+      color: var(--azul);
+      font-size: 16px;
+      font-weight: 600;
+      padding: 12px 0;
+      cursor: pointer;
+      width: 100%;
+    }
+    .btn:disabled { opacity: .55; cursor: wait; }
+
+    /* ---------- Lista de nomes (login) ---------- */
+    .lista { display: flex; flex-direction: column; gap: 8px; }
+    .item-lista {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 100%;
+      min-height: var(--toque);
+      text-align: left;
+      background: var(--branco);
+      border: 1.5px solid var(--borda);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 17px;
+      color: var(--texto);
+      cursor: pointer;
+    }
+
+    /* ---------- Cartões do painel ---------- */
+    .cartao-controle {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      text-align: left;
+      background: var(--branco);
+      border: 1.5px solid var(--borda);
+      border-left: 6px solid var(--ambar);
+      border-radius: var(--raio);
+      padding: 16px;
+      margin-bottom: 10px;
+      font-size: 17px;
+      color: var(--texto);
+      cursor: pointer;
+      box-shadow: var(--sombra);
+    }
+    .cartao-controle.feito { border-left-color: var(--verde); }
+    .cartao-controle.nc { border-left-color: var(--vermelho); }
+    .cartao-controle .info { flex: 1; min-width: 0; }
+    .cartao-controle .titulo { font-weight: 700; }
+    .cartao-controle .detalhe { font-size: 14px; color: var(--texto-suave); }
+    .cartao-controle .seta { font-size: 22px; color: var(--texto-suave); }
+
+    /* ---------- Etiquetas de status ---------- */
+    .etiqueta {
+      display: inline-block;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .etiqueta.pendente { background: var(--ambar-claro); color: var(--ambar); }
+    .etiqueta.feito, .etiqueta.conforme { background: var(--verde-claro); color: var(--verde); }
+    .etiqueta.nc, .etiqueta.nao_conforme { background: var(--vermelho-claro); color: var(--vermelho); }
+    .etiqueta.aguardando { background: var(--azul-claro); color: var(--azul); }
+    .etiqueta.substituido { background: #eee; color: #777; }
+
+    /* ---------- Avisos ---------- */
+    .aviso {
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      font-size: 16px;
+    }
+    .aviso.info { background: var(--azul-claro); color: var(--azul); }
+    .aviso.ok { background: var(--verde-claro); color: var(--verde); }
+    .aviso.alerta { background: var(--ambar-claro); color: var(--ambar); }
+    .aviso.erro { background: var(--vermelho-claro); color: var(--vermelho); }
+
+    .resultado-temp {
+      text-align: center;
+      font-weight: 700;
+      border-radius: 12px;
+      padding: 10px;
+      margin-top: 8px;
+    }
+
+    /* ---------- Foto ---------- */
+    .foto-preview {
+      display: block;
+      width: 100%;
+      max-height: 260px;
+      object-fit: cover;
+      border-radius: 12px;
+      margin-top: 10px;
+      border: 1px solid var(--borda);
+    }
+
+    /* ---------- Histórico ---------- */
+    .linha-hist {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--borda);
+    }
+    .linha-hist:last-child { border-bottom: none; }
+    .linha-hist .quando { font-size: 14px; color: var(--texto-suave); }
+
+    /* ---------- Carregando e mensagens rápidas ---------- */
+    .carregando {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 48px 0;
+      color: var(--texto-suave);
+    }
+    .giro {
+      width: 36px;
+      height: 36px;
+      border: 4px solid var(--borda);
+      border-top-color: var(--dourado);
+      border-radius: 50%;
+      animation: girar .9s linear infinite;
+    }
+    @keyframes girar { to { transform: rotate(360deg); } }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(20px + env(safe-area-inset-bottom));
+      transform: translateX(-50%) translateY(140%);
+      max-width: calc(100% - 32px);
+      background: var(--escuro);
+      color: var(--branco);
+      padding: 14px 18px;
+      border-radius: 12px;
+      font-size: 16px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, .25);
+      transition: transform .25s ease;
+      z-index: 50;
+    }
+    .toast.visivel { transform: translateX(-50%) translateY(0); }
+    .toast.erro { background: var(--vermelho); }
+    .toast.ok { background: var(--verde); }
+
+    .rodape {
+      text-align: center;
+      font-size: 13px;
+      color: var(--texto-suave);
+      margin-top: 32px;
+    }
+  </style>
+</head>
+<body>
+  <header class="topo" id="topo">
+    <button class="voltar" id="btn-voltar" hidden aria-label="Voltar">‹</button>
+    <div class="marca">
+      Mamma Mia · Controle Operacional
+      <small id="topo-usuario"></small>
+    </div>
+    <button id="btn-sair" hidden>Sair</button>
+  </header>
+
+  <div class="faixa-offline" id="faixa-offline"></div>
+
+  <main id="app">
+    <div class="carregando">
+      <div class="giro"></div>
+      Carregando…
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <noscript>
+    <p style="padding:16px">Ative o JavaScript para usar o app.</p>
+  </noscript>
+
+  <script src="/js/app.js" defer></script>
+</body>
+</html>
