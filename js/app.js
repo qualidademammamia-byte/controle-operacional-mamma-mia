@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v9: PDF das fichas para Vigilância, clientes e auditorias)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v10: menu com atalho para a OS e equipe por setor)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -90,6 +90,18 @@
     sessao: lerLocal(CHAVE_SESSAO, null),   // { token, usuario, pinTemporario }
     meusDados: null,
     pilha: []                               // [{ tela, params }]
+  };
+
+  // App de Ordem de Serviço (manutenção), aberto pelo menu
+  const URL_OS = 'https://script.google.com/macros/s/AKfycbxN_cFnGJpZgwVaCAegqB0HwrBsw_wKQd56wXyeq3RK5LZbumHrFaudxu9VjQMPBuOauQ/exec?tela=';
+
+  const NOMES_SETOR = {
+    MOTORISTA: 'Motorista',
+    ESTOQUE: 'Estoque',
+    PRODUCAO: 'Produção',
+    COCCAO: 'Cocção',
+    MANUTENCAO: 'Manutenção',
+    GERAL: 'Geral / Higiene'
   };
 
   const app = document.getElementById('app');
@@ -416,12 +428,26 @@
   }
 
   btnVoltar.addEventListener('click', voltar);
-  btnSair.addEventListener('click', async function () {
+  // O botão do cabeçalho abre o menu (o "Sair" fica dentro do menu)
+  btnSair.textContent = 'Menu';
+  btnSair.setAttribute('aria-label', 'Abrir o menu');
+  btnSair.addEventListener('click', function () {
+    const topo = estado.pilha[estado.pilha.length - 1];
+    if (topo && topo.tela === 'menu') { voltar(); return; }
+    ir('menu');
+  });
+
+  async function sair() {
     if (lerFila().length && !confirmarSaidaComFila()) return;
     try { await api('logout'); } catch (e) { /* sai mesmo assim */ }
     encerrarSessaoLocal();
     irRaiz('login');
-  });
+  }
+
+  function abrirOs() {
+    const janela = window.open(URL_OS, '_blank', 'noopener');
+    if (!janela) window.location.href = URL_OS;   // celular que bloqueia nova aba
+  }
 
   function confirmarSaidaComFila() {
     toast('Há registros guardados sem envio. Conecte à internet antes de sair.', 'erro');
@@ -1820,6 +1846,75 @@
   // =================================================================
   // TELA: PESSOAS E ACESSOS (Admin)
   // =================================================================
+
+  // =================================================================
+  // TELA: MENU (atalhos, OS e equipe por setor)
+  // =================================================================
+
+  TELAS.menu = async function () {
+    const u = (estado.sessao && estado.sessao.usuario) || {};
+    const ehAdmin = !!(u.perfis && u.perfis.indexOf('ADMIN') !== -1);
+
+    let html = '<h1>Menu</h1>' +
+      '<p class="sub">' + esc(u.nome || '') + '</p>' +
+      '<h2>Atalhos</h2>' +
+      '<button class="cartao-controle feito" id="menu-os">' +
+      '<div class="info"><div class="titulo">Ordem de Serviço</div>' +
+      '<div class="detalhe">Abrir uma OS de manutenção (abre o app de OS)</div></div>' +
+      '<span class="seta">↗</span></button>' +
+      '<button class="cartao-controle feito" id="menu-historico">' +
+      '<div class="info"><div class="titulo">Meu histórico</div>' +
+      '<div class="detalhe">Os seus registros dos últimos 30 dias</div></div>' +
+      '<span class="seta">›</span></button>' +
+      '<button class="cartao-controle feito" id="menu-pin">' +
+      '<div class="info"><div class="titulo">Trocar meu PIN</div>' +
+      '<div class="detalhe">Escolha um novo PIN de 4 números</div></div>' +
+      '<span class="seta">›</span></button>' +
+      (ehAdmin ? '<h2>Equipe por setor</h2><div id="menu-equipe"><div class="carregando"><div class="giro"></div>Carregando…</div></div>' : '') +
+      '<button class="btn btn-secundario" id="menu-sair" style="margin-top:24px">Sair</button>';
+
+    app.innerHTML = html;
+
+    $('#menu-os').addEventListener('click', abrirOs);
+    $('#menu-historico').addEventListener('click', function () { ir('historico'); });
+    $('#menu-pin').addEventListener('click', function () { ir('trocarPin', { obrigatorio: false }); });
+    $('#menu-sair').addEventListener('click', sair);
+
+    if (!ehAdmin) return;
+
+    const alvo = $('#menu-equipe');
+    try {
+      const dados = await api('listarAcessos');
+      const setores = {};
+      dados.pessoas.forEach(function (p) {
+        const deps = p.departamentos && p.departamentos.length ? p.departamentos : ['SEM_SETOR'];
+        deps.forEach(function (d) {
+          (setores[d] = setores[d] || []).push(p);
+        });
+      });
+      const ordem = Object.keys(NOMES_SETOR).concat(['SEM_SETOR']).filter(function (d) { return setores[d]; })
+        .concat(Object.keys(setores).filter(function (d) { return !NOMES_SETOR[d] && d !== 'SEM_SETOR'; }));
+
+      if (!ordem.length) { alvo.innerHTML = aviso('info', 'Nenhuma pessoa ativa cadastrada.'); return; }
+
+      alvo.innerHTML = ordem.map(function (d) {
+        const nome = NOMES_SETOR[d] || (d === 'SEM_SETOR' ? 'Sem setor' : d);
+        return '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<strong>' + esc(nome) + '</strong><span class="etiqueta aguardando">' + setores[d].length + '</span></div>' +
+          setores[d].map(function (p) {
+            const perfis = (p.perfis || []).filter(function (x) { return x !== 'OPERADOR'; });
+            return '<div class="linha-hist"><div>' + esc(p.nome) +
+              '<div class="quando">' + esc((p.unidades || []).join(', ') || '—') + ' · ' +
+              p.acessos.length + (p.acessos.length === 1 ? ' controle' : ' controles') +
+              (perfis.length ? ' · ' + esc(perfis.join(', ').toLowerCase()) : '') + '</div></div></div>';
+          }).join('') + '</div>';
+      }).join('') +
+        '<button class="btn btn-secundario" id="menu-acessos">Gerenciar acessos</button>';
+      $('#menu-acessos').addEventListener('click', function () { ir('acessos'); });
+    } catch (e) {
+      alvo.innerHTML = aviso('erro', e.message || 'Não foi possível carregar a equipe.');
+    }
+  };
 
   TELAS.acessos = async function () {
     carregando();
