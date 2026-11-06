@@ -9,7 +9,7 @@
   <title>Mamma Mia · Controle Operacional</title>
 
   <!--
-    MAMMA MIA CONTROLE OPERACIONAL — index.html (Entrega 5a)
+    MAMMA MIA CONTROLE OPERACIONAL — index.html (v2: corrige elementos [hidden])
     Estrutura e visual do app. As telas são desenhadas pelo js/app.js
     dentro de <main id="app">.
   -->
@@ -39,6 +39,10 @@
     }
 
     * { box-sizing: border-box; }
+
+    /* Elementos com o atributo hidden ficam sempre escondidos,
+       mesmo que outra regra defina display (ex.: prévia da foto). */
+    [hidden] { display: none !important; }
 
     html, body {
       margin: 0;
