@@ -519,7 +519,9 @@
       }).join('') +
       '</div>' +
       '<button class="btn btn-secundario" id="btn-primeiro-acesso" style="margin-top:20px">Primeiro acesso: fazer meu cadastro</button>' +
-      '<p class="rodape">Mamma Mia Salgados · Controle Operacional</p>';
+      '<p class="rodape">Mamma Mia Salgados · Controle Operacional<br>' +
+      'Desenvolvido por <strong>Thalita C Oliveira</strong> — Processos e Automações<br>' +
+      '<a href="mailto:qualidade@mammamiasalgados.com.br" style="color:var(--dourado-escuro)">qualidade@mammamiasalgados.com.br</a></p>';
 
     $('#login-os').addEventListener('click', abrirOs);
 
