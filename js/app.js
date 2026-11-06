@@ -1,13 +1,13 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v3: Motorista + Estoque + Cocção)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v4: Motorista + Estoque + Cocção + Higiene)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
  * TELAS
  *   login · pin · cadastro (primeiro acesso) · aguardando aprovação
- *   trocar PIN · início (painéis de motorista, estoque e cocção)
+ *   trocar PIN · início (painéis de motorista, estoque, cocção e higiene)
  *   temperatura · higienização · recebimento · resultado do recebimento
- *   cocção (v3) · resultado da cocção (v3)
+ *   cocção · resultado da cocção · monitoramento de higiene (v4)
  *   histórico · aprovações e PIN temporário (Admin)
  *
  * A cocção precisa de internet: cada nova medição depende da anterior,
@@ -32,7 +32,7 @@
   const FOTO_LADO_MAX = 1280;
   const FOTO_QUALIDADE = 0.7;
   const INTERVALO_SYNC_MS = 60000;
-  const ACOES_COM_FILA = ['registrarTemperatura', 'registrarHigienizacao', 'registrarRecebimento'];
+  const ACOES_COM_FILA = ['registrarTemperatura', 'registrarHigienizacao', 'registrarRecebimento', 'registrarHigiene'];
 
   const DEPARTAMENTOS = [
     ['MOTORISTA', 'Motorista'],
@@ -670,18 +670,36 @@
     estado.meusDados = meus;
     const temEstoque = meus.rotinas.some(function (r) { return r.id_modelo === 'REC_MP'; });
     const temCoccao = meus.rotinas.some(function (r) { return r.id_modelo === 'COC_TEMP'; });
+    const temHigiene = meus.rotinas.some(function (r) { return r.id_modelo === 'MON_HIGIENE'; });
     const temMotorista = meus.rotinas.some(function (r) { return r.id_modelo === 'TEMP_VEICULO' || r.id_modelo === 'HIG_VEICULO'; });
 
-    const [painel, painelEst, painelCoc, pendentes] = await Promise.all([
+    const [painel, painelEst, painelCoc, painelHig, pendentes] = await Promise.all([
       api('painelMotorista'),
       temEstoque ? api('painelEstoque') : Promise.resolve(null),
       temCoccao ? api('painelCoccao') : Promise.resolve(null),
+      temHigiene ? api('painelHigiene') : Promise.resolve(null),
       ehAdmin ? api('listarPendentes').catch(function () { return []; }) : Promise.resolve([])
     ]);
 
     let html = '<h1>Olá, ' + esc(primeiroNome(meus.nome)) + '</h1>' +
       '<p class="sub">' + esc(dataBR(painel.hoje)) +
       (temMotorista ? ' · semana de ' + esc(dataBR(painel.semana.inicio)) + ' a ' + esc(dataBR(painel.semana.fim)) : '') + '</p>';
+
+    // Monitoramento de higiene
+    if (painelHig) {
+      html += '<h2>Monitoramento de higiene</h2>';
+      painelHig.areas.forEach(function (a, i) {
+        const feitas = a.verificacoes.filter(function (v) { return v.feita; }).length;
+        const detalhe = a.verificacoes.map(function (v) {
+          return v.verificacao + 'ª ' + (v.feita ? '✓ ' + v.hora_inicio + '–' + v.hora_fim : 'pendente');
+        }).join(' · ') + (a.ncsAbertas ? ' · ' + a.ncsAbertas + ' NC(s) aberta(s)' : '');
+        const tudoFeito = feitas === a.verificacoes.length;
+        html += '<button class="cartao-controle ' + (a.ncsAbertas ? 'nc' : (tudoFeito ? 'feito' : '')) + '" data-hig="' + i + '">' +
+          '<div class="info"><div class="titulo">Monitoramento — ' + esc(a.id_unidade) + '</div>' +
+          '<div class="detalhe">' + esc(detalhe) + '</div></div>' +
+          '<span class="etiqueta ' + (tudoFeito ? 'feito' : 'pendente') + '">' + feitas + '/' + a.verificacoes.length + '</span></button>';
+      });
+    }
 
     // Estoque
     if (painelEst) {
@@ -768,7 +786,7 @@
           '<div class="info"><div class="titulo">' + esc(c.titulo) + '</div><div class="detalhe">' + esc(detalhe) + '</div></div>' +
           '<span class="etiqueta ' + (feito ? 'feito' : 'pendente') + '">' + (feito ? 'Feito' : 'Pendente') + '</span></button>';
       });
-    } else if (!ehAdmin && !painelEst && !painelCoc) {
+    } else if (!ehAdmin && !painelEst && !painelCoc && !painelHig) {
       html += aviso('info', 'Nenhum controle liberado para você ainda. Fale com a Qualidade.');
     }
 
@@ -786,6 +804,13 @@
         } else {
           ir('higienizacao', { id_ativo: c.id_ativo, placa: c.placa, tipo: c.tipo, extra: c.situacao === 'FEITO' });
         }
+      });
+    });
+
+    $$('.cartao-controle[data-hig]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const a = painelHig.areas[Number(b.getAttribute('data-hig'))];
+        ir('monitoramento', { id_ativo: a.id_ativo, id_unidade: a.id_unidade });
       });
     });
 
@@ -1417,6 +1442,165 @@
   };
 
   // =================================================================
+  // TELA: MONITORAMENTO DE HIGIENE (checklist por setor)
+  // =================================================================
+
+  TELAS.monitoramento = async function (p) {
+    carregando();
+    const dados = await api('checklistHigiene', { id_ativo: p.id_ativo });
+    const horaInicio = horaAgora();       // início = quando o checklist foi aberto
+    const idCliente = uuid();
+    const pendentesHoje = dados.hoje.filter(function (v) { return !v.feita; });
+    const totalItens = dados.setores.reduce(function (n, s) { return n + s.itens.length; }, 0);
+
+    const estiloBtn = 'min-height:44px;padding:6px;font-size:15px';
+    let html = '<h1>Monitoramento de higiene</h1>' +
+      '<p class="sub">' + esc(p.id_unidade || '') + ' · início ' + esc(horaInicio) + ' · C = Conforme · NC = Não Conforme · SA = Sem Atividade</p>';
+
+    if (!pendentesHoje.length) {
+      app.innerHTML = html + aviso('ok', 'As ' + dados.vezesPorDia + ' verificações de hoje já foram registradas nesta área.') +
+        '<button class="btn btn-secundario" id="btn-voltar-inicio">Voltar ao início</button>';
+      $('#btn-voltar-inicio').addEventListener('click', function () { irRaiz('inicio'); });
+      return;
+    }
+
+    if (dados.ncsAbertas.length) {
+      html += '<div class="aviso alerta"><strong>' + dados.ncsAbertas.length + ' NC(s) aberta(s) nesta área:</strong><br>' +
+        dados.ncsAbertas.slice(0, 5).map(function (n) { return esc(n.item) + ' — ' + esc(n.descricao); }).join('<br>') +
+        (dados.ncsAbertas.length > 5 ? '<br>…' : '') + '</div>';
+    }
+
+    html += '<div id="msg"></div>' +
+      '<div class="campo"><label>Qual verificação do dia?</label>' +
+      htmlOpcoes('verif', pendentesHoje.map(function (v) { return [String(v.verificacao), v.verificacao + 'ª verificação']; }), [String(pendentesHoje[0].verificacao)]) +
+      '</div>' +
+      '<div class="aviso info" id="progresso">0 de ' + totalItens + ' itens respondidos</div>';
+
+    dados.setores.forEach(function (s) {
+      html += '<div class="card" data-setor="' + esc(s.id) + '">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">' +
+        '<strong>' + esc(s.id + '. ' + s.nome) + '</strong>' +
+        '<button type="button" class="opcao" data-tudo-c="' + esc(s.id) + '" style="' + estiloBtn + ';min-width:96px">Tudo C</button></div>';
+      s.itens.forEach(function (it) {
+        html += '<div class="linha-hist" style="flex-wrap:wrap" data-item="' + it.numero + '">' +
+          '<div style="flex:1;min-width:160px"><strong>' + it.numero + '.</strong> ' + esc(it.texto) + '</div>' +
+          '<div class="opcoes" data-grupo="item-' + it.numero + '" style="grid-template-columns:repeat(3,56px);gap:6px">' +
+          ['C', 'NC', 'SA'].map(function (r) {
+            return '<button type="button" class="opcao" data-valor="' + r + '" style="' + estiloBtn + '">' + r + '</button>';
+          }).join('') +
+          '</div>' +
+          '<div data-nc-bloco="' + it.numero + '" hidden style="width:100%;margin-top:10px">' +
+          '<div class="campo"><label>Não conformidade</label><textarea data-nc-desc="' + it.numero + '" style="min-height:64px"></textarea></div>' +
+          '<div class="campo"><label>Ação imediata</label><textarea data-nc-acao="' + it.numero + '" style="min-height:64px"></textarea></div>' +
+          '<div class="campo"><label>Responsável pela ação imediata</label><input data-nc-resp="' + it.numero + '" autocomplete="off"></div>' +
+          '</div></div>';
+      });
+      html += '</div>';
+    });
+
+    html += '<div class="campo"><label for="obs">Observação geral (opcional)</label><textarea id="obs"></textarea></div>' +
+      '<button class="btn btn-principal" id="btn-salvar">Registrar verificação</button>';
+    app.innerHTML = html;
+
+    ligarOpcoes('verif', false);
+
+    function atualizarProgresso() {
+      let respondidos = 0;
+      let ncs = 0;
+      dados.setores.forEach(function (s) {
+        s.itens.forEach(function (it) {
+          const v = valorOpcao('item-' + it.numero);
+          if (v) respondidos++;
+          if (v === 'NC') ncs++;
+          app.querySelector('[data-nc-bloco="' + it.numero + '"]').hidden = v !== 'NC';
+        });
+      });
+      const el = $('#progresso');
+      el.textContent = respondidos + ' de ' + totalItens + ' itens respondidos' + (ncs ? ' · ' + ncs + ' NC' : '');
+      el.className = 'aviso ' + (respondidos === totalItens ? (ncs ? 'alerta' : 'ok') : 'info');
+    }
+
+    dados.setores.forEach(function (s) {
+      s.itens.forEach(function (it) { ligarOpcoes('item-' + it.numero, false, atualizarProgresso); });
+    });
+
+    $$('[data-tudo-c]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const setor = dados.setores.filter(function (s) { return s.id === b.getAttribute('data-tudo-c'); })[0];
+        setor.itens.forEach(function (it) {
+          // Não troca um item que já está como NC ou SA
+          if (valorOpcao('item-' + it.numero)) return;
+          $$('[data-grupo="item-' + it.numero + '"] .opcao').forEach(function (o) {
+            o.classList.toggle('marcada', o.getAttribute('data-valor') === 'C');
+          });
+        });
+        atualizarProgresso();
+      });
+    });
+
+    const botao = $('#btn-salvar');
+    botao.addEventListener('click', async function () {
+      const respostas = {};
+      const ncs = {};
+      const faltando = [];
+      let erroNc = '';
+
+      dados.setores.forEach(function (s) {
+        s.itens.forEach(function (it) {
+          const v = valorOpcao('item-' + it.numero);
+          if (!v) { faltando.push(it.numero); return; }
+          respostas[String(it.numero)] = v;
+          if (v === 'NC') {
+            const nc = {
+              descricao: app.querySelector('[data-nc-desc="' + it.numero + '"]').value.trim(),
+              acao_imediata: app.querySelector('[data-nc-acao="' + it.numero + '"]').value.trim(),
+              resp_acao_imediata: app.querySelector('[data-nc-resp="' + it.numero + '"]').value.trim()
+            };
+            if (!erroNc && (!nc.descricao || !nc.acao_imediata || !nc.resp_acao_imediata)) {
+              erroNc = 'Item ' + it.numero + ': preencha a não conformidade, a ação imediata e o responsável.';
+            }
+            ncs[String(it.numero)] = nc;
+          }
+        });
+      });
+
+      if (faltando.length) {
+        $('#msg').innerHTML = aviso('erro', 'Faltam ' + faltando.length + ' item(ns) sem resposta: ' + faltando.slice(0, 12).join(', ') + (faltando.length > 12 ? '…' : '') + '.');
+        window.scrollTo(0, 0);
+        return;
+      }
+      if (erroNc) { $('#msg').innerHTML = aviso('erro', erroNc); window.scrollTo(0, 0); return; }
+
+      travarBotao(botao, 'Registrando…');
+      try {
+        const r = await enviarRegistro('registrarHigiene', {
+          id_ativo: p.id_ativo,
+          verificacao: Number(valorOpcao('verif')),
+          hora_inicio: horaInicio,
+          respostas: respostas,
+          ncs: ncs,
+          observacao: $('#obs').value,
+          id_cliente: idCliente
+        });
+        if (r.guardado) {
+          toast('Sem internet: verificação guardada no celular. Será enviada sozinha.', 'ok');
+        } else if (r.dados.duplicado) {
+          toast('Esta verificação já tinha sido enviada.', 'ok');
+        } else {
+          const t = r.dados.monitoramento.totais;
+          const abertas = r.dados.monitoramento.ncsAbertas;
+          toast('Registrada: ' + t.C + ' C · ' + t.NC + ' NC · ' + t.SA + ' SA' + (abertas.length ? ' · ' + abertas.join(', ') + ' aberta(s)' : ''), t.NC ? 'erro' : 'ok');
+        }
+        irRaiz('inicio');
+      } catch (e) {
+        destravarBotao(botao);
+        $('#msg').innerHTML = aviso('erro', e.message);
+        window.scrollTo(0, 0);
+      }
+    });
+  };
+
+  // =================================================================
   // TELA: HISTÓRICO
   // =================================================================
 
@@ -1435,7 +1619,9 @@
             ? 'Temperatura ' + String(d.temperatura).replace('.', ',') + ' °C'
             : item.acao === 'registrarRecebimento'
               ? 'Recebimento ' + String(d.produto || '').toUpperCase()
-              : 'Higienização ' + (d.tipo === 'BAU' ? 'baú' : 'cabine');
+              : item.acao === 'registrarHigiene'
+                ? 'Monitoramento ' + d.verificacao + 'ª verificação'
+                : 'Higienização ' + (d.tipo === 'BAU' ? 'baú' : 'cabine');
           return '<div class="linha-hist"><div>' + esc(titulo) + '<div class="quando">' + esc(new Date(item.guardado_em).toLocaleString('pt-BR')) + '</div></div>' +
             '<span class="etiqueta pendente">Não enviado</span></div>';
         }).join('') + '</div>';
@@ -1448,6 +1634,9 @@
         let titulo;
         if (r.id_modelo === 'TEMP_VEICULO') {
           titulo = 'Temperatura ' + (r.turno === 'MANHA' ? 'manhã' : 'tarde') + ' · ' + String(r.valor_num).replace('.', ',') + ' °C';
+        } else if (r.id_modelo === 'MON_HIGIENE') {
+          const t = r.valores.totais || {};
+          titulo = 'Monitoramento ' + (r.valores.verificacao || r.turno) + 'ª verificação · ' + (t.C || 0) + ' C · ' + (t.NC || 0) + ' NC · ' + (t.SA || 0) + ' SA';
         } else if (r.id_modelo === 'COC_TEMP') {
           titulo = 'Cocção ' + (r.valores.preparacao || '') + ' · ' + String(r.valor_num).replace('.', ',') + ' °C' +
             (r.valores.encerramento ? ' (encerrada)' : r.valores.numero_medicao > 1 ? ' (' + r.valores.numero_medicao + 'ª medição)' : '');
