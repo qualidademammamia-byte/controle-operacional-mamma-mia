@@ -1,11 +1,12 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (Entrega 5b)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v2: Motorista + Estoque)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
  * TELAS
  *   login · pin · cadastro (primeiro acesso) · aguardando aprovação
- *   trocar PIN · início (painel do motorista) · temperatura · higienização
+ *   trocar PIN · início (painel do motorista e do estoque) · temperatura
+ *   higienização · recebimento (v2) · resultado do recebimento (v2)
  *   histórico · aprovações e PIN temporário (Admin)
  *
  * FILA OFFLINE
@@ -27,7 +28,7 @@
   const FOTO_LADO_MAX = 1280;
   const FOTO_QUALIDADE = 0.7;
   const INTERVALO_SYNC_MS = 60000;
-  const ACOES_COM_FILA = ['registrarTemperatura', 'registrarHigienizacao'];
+  const ACOES_COM_FILA = ['registrarTemperatura', 'registrarHigienizacao', 'registrarRecebimento'];
 
   const DEPARTAMENTOS = [
     ['MOTORISTA', 'Motorista'],
@@ -47,7 +48,23 @@
     ['REFRIGERADO', 'Refrigerado'],
     ['RESFRIADO', 'Resfriado']
   ];
+  const CONSERVACOES = [
+    ['CONGELADO', 'Congelado'],
+    ['REFRIGERADO', 'Refrigerado'],
+    ['CARNE_RESFRIADA', 'Carne resfriada'],
+    ['PESCADO_RESFRIADO', 'Pescado resfriado'],
+    ['AMBIENTE', 'Ambiente (seco)']
+  ];
+  const UNIDADES_MEDIDA = [
+    ['KG', 'kg'], ['L', 'L'], ['CX', 'cx'], ['PC', 'pç'], ['PAC', 'pac'], ['BALDE', 'balde'], ['UN', 'un']
+  ];
+  const NOMES_MOTIVO_REC = {
+    TEMPERATURA_ACIMA: 'temperatura acima do limite',
+    VALIDADE_VENCIDA: 'validade vencida',
+    EMBALAGEM_DANIFICADA: 'embalagem danificada'
+  };
   const NOMES_STATUS = {
+    IMPORTADO: 'Importado',
     CONFORME: 'Conforme',
     NAO_CONFORME: 'Não conforme',
     AGUARDANDO_VERIFICACAO: 'Aguardando verificação',
@@ -644,15 +661,44 @@
     carregando();
     const ehAdmin = temPerfil('ADMIN');
 
-    const [painel, meus, pendentes] = await Promise.all([
+    const meus = await api('meusDados');
+    estado.meusDados = meus;
+    const temEstoque = meus.rotinas.some(function (r) { return r.id_modelo === 'REC_MP'; });
+    const temMotorista = meus.rotinas.some(function (r) { return r.id_modelo === 'TEMP_VEICULO' || r.id_modelo === 'HIG_VEICULO'; });
+
+    const [painel, painelEst, pendentes] = await Promise.all([
       api('painelMotorista'),
-      api('meusDados'),
+      temEstoque ? api('painelEstoque') : Promise.resolve(null),
       ehAdmin ? api('listarPendentes').catch(function () { return []; }) : Promise.resolve([])
     ]);
-    estado.meusDados = meus;
 
     let html = '<h1>Olá, ' + esc(primeiroNome(meus.nome)) + '</h1>' +
-      '<p class="sub">' + esc(dataBR(painel.hoje)) + ' · semana de ' + esc(dataBR(painel.semana.inicio)) + ' a ' + esc(dataBR(painel.semana.fim)) + '</p>';
+      '<p class="sub">' + esc(dataBR(painel.hoje)) +
+      (temMotorista ? ' · semana de ' + esc(dataBR(painel.semana.inicio)) + ' a ' + esc(dataBR(painel.semana.fim)) : '') + '</p>';
+
+    // Estoque
+    if (painelEst) {
+      html += '<h2>Recebimento</h2>';
+      painelEst.areas.forEach(function (a, i) {
+        const detalhe = a.recebidosHoje + (a.recebidosHoje === 1 ? ' recebimento hoje' : ' recebimentos hoje') +
+          (a.segregadosHoje ? ' · ' + a.segregadosHoje + ' segregado(s)' : '');
+        html += '<button class="cartao-controle ' + (a.segregadosHoje ? 'nc' : 'feito') + '" data-area="' + i + '">' +
+          '<div class="info"><div class="titulo">Novo recebimento — ' + esc(a.id_unidade) + '</div>' +
+          '<div class="detalhe">' + esc(detalhe) + '</div></div>' +
+          '<span class="seta">+</span></button>';
+      });
+      if (painelEst.recentes.length) {
+        html += '<div class="card"><strong>Recebidos hoje</strong>' +
+          painelEst.recentes.map(function (r) {
+            const v = r.valores || {};
+            const seg = v.destino === 'SEGREGADO';
+            return '<div class="linha-hist"><div>' + esc(v.produto || '') +
+              '<div class="quando">' + esc(v.fornecedor || '') + ' · ' + esc(horaBR(r.carimbo_servidor)) +
+              (r.valor_num !== null ? ' · ' + esc(String(r.valor_num).replace('.', ',')) + ' °C' : '') + '</div></div>' +
+              '<span class="etiqueta ' + (seg ? 'nc' : 'conforme') + '">' + (seg ? 'Segregado' : 'Liberado') + '</span></div>';
+          }).join('') + '</div>';
+      }
+    }
 
     // Admin
     if (ehAdmin) {
@@ -687,7 +733,7 @@
           '<div class="info"><div class="titulo">' + esc(c.titulo) + '</div><div class="detalhe">' + esc(detalhe) + '</div></div>' +
           '<span class="etiqueta ' + (feito ? 'feito' : 'pendente') + '">' + (feito ? 'Feito' : 'Pendente') + '</span></button>';
       });
-    } else if (!ehAdmin) {
+    } else if (!ehAdmin && !painelEst) {
       html += aviso('info', 'Nenhum controle liberado para você ainda. Fale com a Qualidade.');
     }
 
@@ -705,6 +751,13 @@
         } else {
           ir('higienizacao', { id_ativo: c.id_ativo, placa: c.placa, tipo: c.tipo, extra: c.situacao === 'FEITO' });
         }
+      });
+    });
+
+    $$('.cartao-controle[data-area]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const a = painelEst.areas[Number(b.getAttribute('data-area'))];
+        ir('recebimento', { id_ativo: a.id_ativo, id_unidade: a.id_unidade });
       });
     });
 
@@ -922,6 +975,233 @@
   }
 
   // =================================================================
+  // TELA: RECEBIMENTO (Estoque)
+  // =================================================================
+
+  TELAS.recebimento = async function (p) {
+    carregando();
+    const catalogo = await api('catalogoRecebimento').catch(function (e) {
+      if (ehErroDeRede(e)) return { fornecedores: [], produtos: [] }; // sem internet: digita livre
+      throw e;
+    });
+    const produtosPorNome = {};
+    catalogo.produtos.forEach(function (pr) { produtosPorNome[String(pr.nome).toUpperCase()] = pr; });
+
+    let negativo = false;
+    let fotoBase64 = '';
+    const idCliente = uuid();   // o mesmo id se for preciso reenviar (ex.: confirmar validade)
+
+    app.innerHTML =
+      '<h1>Novo recebimento</h1>' +
+      '<p class="sub">Área de recebimento · ' + esc(p.id_unidade || '') + '</p>' +
+      '<div id="msg"></div>' +
+
+      '<div class="campo"><label for="fornecedor">Fornecedor</label>' +
+      '<input id="fornecedor" list="lista-fornecedores" autocomplete="off" autocapitalize="characters" placeholder="Digite ou escolha">' +
+      '<datalist id="lista-fornecedores">' + catalogo.fornecedores.map(function (f) { return '<option value="' + esc(f) + '">'; }).join('') + '</datalist></div>' +
+
+      '<div class="campo"><label for="produto">Produto</label>' +
+      '<input id="produto" list="lista-produtos" autocomplete="off" autocapitalize="characters" placeholder="Digite ou escolha">' +
+      '<datalist id="lista-produtos">' + catalogo.produtos.map(function (pr) { return '<option value="' + esc(pr.nome) + '">'; }).join('') + '</datalist></div>' +
+
+      '<div class="campo"><label>Conservação</label>' + htmlOpcoes('conservacao', CONSERVACOES) + '</div>' +
+
+      '<div class="campo" id="bloco-temp" hidden><label for="temp">Temperatura do produto (°C)</label>' +
+      '<div style="display:flex;gap:10px">' +
+      '<button type="button" class="opcao" id="btn-sinal" style="min-width:72px;font-size:28px">+</button>' +
+      '<input id="temp" class="grande" type="text" inputmode="decimal" placeholder="0,0" autocomplete="off">' +
+      '</div><div class="ajuda">Toque em − / + para trocar o sinal.</div></div>' +
+
+      '<div class="campo"><label for="validade">Validade</label><input id="validade" type="date"></div>' +
+
+      '<div class="campo"><label for="qtd">Quantidade recebida</label>' +
+      '<input id="qtd" type="text" inputmode="decimal" placeholder="Ex.: 92,5" autocomplete="off"></div>' +
+      '<div class="campo"><label>Unidade</label>' + htmlOpcoes('unidade', UNIDADES_MEDIDA) + '</div>' +
+
+      '<div class="campo"><label>Embalagem íntegra?</label>' + htmlOpcoes('embalagem', [['SIM', 'Sim'], ['NAO', 'Não']]) + '</div>' +
+
+      '<div class="campo"><label for="nf">Nº da nota fiscal (opcional)</label><input id="nf" inputmode="numeric" autocomplete="off"></div>' +
+      '<div class="campo"><label for="lote">Lote (opcional)</label><input id="lote" autocapitalize="characters" autocomplete="off"></div>' +
+      '<div class="campo"><label for="foto">Foto do rótulo (opcional)</label><input id="foto" type="file" accept="image/*" capture="environment"><img id="preview" class="foto-preview" hidden alt="Foto do rótulo"></div>' +
+      '<div class="campo"><label for="obs">Observação</label><textarea id="obs" placeholder="Obrigatória se o produto for segregado"></textarea></div>' +
+
+      '<button class="btn btn-principal" id="btn-salvar">Registrar recebimento</button>';
+
+    // Conservação: mostra/esconde temperatura e sugere o sinal
+    function aoMudarConservacao() {
+      const c = valorOpcao('conservacao');
+      $('#bloco-temp').hidden = !c || c === 'AMBIENTE';
+      negativo = c === 'CONGELADO';
+      $('#btn-sinal').textContent = negativo ? '−' : '+';
+    }
+    ligarOpcoes('conservacao', false, aoMudarConservacao);
+    ligarOpcoes('unidade', false);
+    ligarOpcoes('embalagem', false);
+
+    function marcarOpcao(grupo, valor) {
+      $$('[data-grupo="' + grupo + '"] .opcao').forEach(function (o) {
+        o.classList.toggle('marcada', o.getAttribute('data-valor') === valor);
+      });
+    }
+
+    // Produto conhecido: preenche conservação e unidade sozinho
+    $('#produto').addEventListener('change', function () {
+      const conhecido = produtosPorNome[$('#produto').value.trim().toUpperCase()];
+      if (!conhecido) return;
+      if (conhecido.conservacao) { marcarOpcao('conservacao', conhecido.conservacao); aoMudarConservacao(); }
+      if (conhecido.unidade_medida) marcarOpcao('unidade', conhecido.unidade_medida);
+    });
+
+    $('#btn-sinal').addEventListener('click', function () {
+      negativo = !negativo;
+      $('#btn-sinal').textContent = negativo ? '−' : '+';
+    });
+
+    ['#temp', '#qtd'].forEach(function (sel) {
+      const campo = $(sel);
+      campo.addEventListener('input', function () {
+        let v = campo.value.replace(/[^0-9.,]/g, '').replace('.', ',');
+        const partes = v.split(',');
+        if (partes.length > 2) v = partes[0] + ',' + partes.slice(1).join('');
+        campo.value = v;
+      });
+    });
+
+    $('#foto').addEventListener('change', async function (ev) {
+      const arquivo = ev.target.files && ev.target.files[0];
+      if (!arquivo) return;
+      try {
+        fotoBase64 = await reduzirFoto(arquivo);
+        $('#preview').src = fotoBase64;
+        $('#preview').hidden = false;
+      } catch (e) {
+        fotoBase64 = '';
+        $('#msg').innerHTML = aviso('erro', 'Não foi possível ler a foto. Tente de novo.');
+      }
+    });
+
+    function montarDados(confirmarValidade) {
+      const conservacao = valorOpcao('conservacao');
+      const embalagem = valorOpcao('embalagem');
+      const textoTemp = $('#temp').value.trim();
+      const dados = {
+        id_ativo: p.id_ativo,
+        fornecedor: $('#fornecedor').value,
+        produto: $('#produto').value,
+        conservacao: conservacao,
+        temperatura: conservacao && conservacao !== 'AMBIENTE' && textoTemp
+          ? (negativo ? -1 : 1) * Number(textoTemp.replace(',', '.'))
+          : '',
+        validade: $('#validade').value,
+        quantidade: $('#qtd').value.replace(',', '.'),
+        unidade_medida: valorOpcao('unidade'),
+        embalagem_integra: embalagem === 'SIM' ? true : (embalagem === 'NAO' ? false : null),
+        nota_fiscal: $('#nf').value,
+        lote: $('#lote').value,
+        observacao: $('#obs').value,
+        id_cliente: idCliente
+      };
+      if (confirmarValidade) dados.confirmarValidadeVencida = true;
+      if (fotoBase64) { dados.foto_base64 = fotoBase64; dados.foto_mime = 'image/jpeg'; }
+      return dados;
+    }
+
+    function validarLocal(d) {
+      if (!d.fornecedor.trim()) return 'Informe o fornecedor.';
+      if (!d.produto.trim()) return 'Informe o produto.';
+      if (!d.conservacao) return 'Escolha a conservação.';
+      if (d.conservacao !== 'AMBIENTE' && (d.temperatura === '' || isNaN(d.temperatura))) return 'Digite a temperatura do produto.';
+      if (!d.validade) return 'Informe a validade.';
+      if (!d.quantidade || isNaN(Number(d.quantidade)) || Number(d.quantidade) <= 0) return 'Informe a quantidade.';
+      if (!d.unidade_medida) return 'Escolha a unidade da quantidade.';
+      if (d.embalagem_integra === null) return 'Informe se a embalagem está íntegra.';
+      return '';
+    }
+
+    const botao = $('#btn-salvar');
+
+    async function salvar(confirmarValidade) {
+      const dados = montarDados(confirmarValidade);
+      const erroLocal = validarLocal(dados);
+      if (erroLocal) { $('#msg').innerHTML = aviso('erro', erroLocal); window.scrollTo(0, 0); return; }
+
+      travarBotao(botao, 'Registrando…');
+      try {
+        const r = await enviarRegistro('registrarRecebimento', dados);
+        if (r.guardado) {
+          toast('Sem internet: recebimento guardado no celular. Será enviado sozinho.', 'ok');
+          irRaiz('inicio');
+          return;
+        }
+        estado.pilha.pop();
+        ir('resultadoRecebimento', {
+          produto: dados.produto.trim().toUpperCase(),
+          id_ativo: p.id_ativo,
+          id_unidade: p.id_unidade,
+          duplicado: r.dados.duplicado,
+          avaliacao: r.dados.avaliacao || null
+        });
+      } catch (e) {
+        destravarBotao(botao);
+        if (e.codigo === 'CONFIRMAR_VALIDADE') {
+          $('#msg').innerHTML = aviso('alerta', e.message) +
+            '<div id="msg-obs"></div>' +
+            '<button class="btn btn-perigo" id="btn-confirmar-validade">A validade está certa: registrar como segregado</button>' +
+            '<button class="btn btn-secundario" id="btn-corrigir-validade">Corrigir a validade</button>';
+          $('#btn-confirmar-validade').addEventListener('click', function () {
+            if (!$('#obs').value.trim()) {
+              $('#msg-obs').innerHTML = aviso('erro', 'Antes de confirmar, escreva na observação (no fim da tela) o que foi feito com o produto. Ex.: segregado na câmara, fornecedor avisado.');
+              $('#obs').focus();
+              return;
+            }
+            salvar(true);
+          });
+          $('#btn-corrigir-validade').addEventListener('click', function () { $('#msg').innerHTML = ''; $('#validade').focus(); });
+        } else {
+          $('#msg').innerHTML = aviso(e.codigo === 'OBSERVACAO_OBRIGATORIA' ? 'alerta' : 'erro', e.message);
+          if (e.codigo === 'OBSERVACAO_OBRIGATORIA') $('#obs').focus();
+        }
+        window.scrollTo(0, 0);
+      }
+    }
+
+    botao.addEventListener('click', function () { salvar(false); });
+  };
+
+  // =================================================================
+  // TELA: RESULTADO DO RECEBIMENTO
+  // =================================================================
+
+  TELAS.resultadoRecebimento = function (p) {
+    const a = p.avaliacao;
+    let html;
+
+    if (p.duplicado || !a) {
+      html = '<h1>Recebimento registrado</h1>' + aviso('ok', 'Este recebimento já estava registrado.');
+    } else if (a.conforme) {
+      html = '<h1>Liberado</h1>' +
+        '<div class="aviso ok" style="font-size:20px;text-align:center"><strong>' + esc(p.produto) + '</strong><br>Conforme. Pode armazenar.</div>';
+    } else {
+      html = '<h1>Segregar</h1>' +
+        '<div class="aviso erro" style="font-size:20px;text-align:center"><strong>' + esc(p.produto) + '</strong><br>' +
+        'NÃO CONFORME: separe o produto e identifique como segregado.</div>' +
+        aviso('alerta', 'Motivo: ' + a.motivos.map(function (m) { return NOMES_MOTIVO_REC[m] || m; }).join(', ') +
+          (a.limite !== null && a.motivos.indexOf('TEMPERATURA_ACIMA') !== -1 ? ' (limite ' + String(a.limite).replace('.', ',') + ' °C)' : '') +
+          '. A Qualidade vai avaliar.');
+    }
+
+    html += '<button class="btn btn-principal" id="btn-novo">Novo recebimento</button>' +
+      '<button class="btn btn-secundario" id="btn-inicio">Voltar ao início</button>';
+    app.innerHTML = html;
+
+    $('#btn-novo').addEventListener('click', function () {
+      estado.pilha.pop();
+      ir('recebimento', { id_ativo: p.id_ativo, id_unidade: p.id_unidade });
+    });
+    $('#btn-inicio').addEventListener('click', function () { irRaiz('inicio'); });
+  };
+
+  // =================================================================
   // TELA: HISTÓRICO
   // =================================================================
 
@@ -938,7 +1218,9 @@
           const d = item.dados;
           const titulo = item.acao === 'registrarTemperatura'
             ? 'Temperatura ' + String(d.temperatura).replace('.', ',') + ' °C'
-            : 'Higienização ' + (d.tipo === 'BAU' ? 'baú' : 'cabine');
+            : item.acao === 'registrarRecebimento'
+              ? 'Recebimento ' + String(d.produto || '').toUpperCase()
+              : 'Higienização ' + (d.tipo === 'BAU' ? 'baú' : 'cabine');
           return '<div class="linha-hist"><div>' + esc(titulo) + '<div class="quando">' + esc(new Date(item.guardado_em).toLocaleString('pt-BR')) + '</div></div>' +
             '<span class="etiqueta pendente">Não enviado</span></div>';
         }).join('') + '</div>';
@@ -951,6 +1233,10 @@
         let titulo;
         if (r.id_modelo === 'TEMP_VEICULO') {
           titulo = 'Temperatura ' + (r.turno === 'MANHA' ? 'manhã' : 'tarde') + ' · ' + String(r.valor_num).replace('.', ',') + ' °C';
+        } else if (r.id_modelo === 'REC_MP') {
+          titulo = 'Recebimento ' + (r.valores.produto || '') +
+            (r.valor_num !== null ? ' · ' + String(r.valor_num).replace('.', ',') + ' °C' : '') +
+            (r.valores.destino === 'SEGREGADO' ? ' · segregado' : '');
         } else {
           titulo = 'Higienização ' + (r.valores.tipo === 'BAU' ? 'baú' : 'cabine') + (r.valores.motivo === 'EXTRA' ? ' (extra)' : r.valores.motivo === 'REINSPECAO' ? ' (reinspeção)' : '');
         }
@@ -986,7 +1272,9 @@
         '<div class="sub" style="margin:4px 0 12px">' + esc(u.departamento) + ' · ' + esc(u.unidade) +
         (u.telefone ? ' · ' + esc(u.telefone) : '') + '</div>';
 
-      if (v) {
+      if (v && v.tipo === 'AREA') {
+        html += '<div class="aviso info">Área: <strong>' + esc(v.descricao || v.id_ativo) + '</strong></div>';
+      } else if (v) {
         html += '<div class="aviso ' + (v.veiculo_novo ? 'info' : 'alerta') + '">' +
           (v.veiculo_novo ? 'Veículo novo: ' : 'Vinculado a veículo já cadastrado: ') +
           '<strong>' + esc(v.placa) + '</strong> ' + esc([v.marca, v.modelo].filter(Boolean).join(' ')) + '</div>';
