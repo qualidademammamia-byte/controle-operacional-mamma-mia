@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v6: + Fila de verificação e NCs)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v7: + PDFs para a Vigilância)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -11,6 +11,7 @@
  *   histórico · aprovações e PIN temporário (Admin)
  *   pessoas e acessos (Admin, v5)
  *   fila de verificação · NCs · avançar NC (Qualidade, v6)
+ *   gerar PDF por ficha e mês (Qualidade, v7)
  *
  * A cocção precisa de internet: cada nova medição depende da anterior,
  * por isso ela não entra na fila offline.
@@ -766,7 +767,11 @@
         '<button class="cartao-controle ' + (resumoQ.ncsVencidas ? 'nc' : (resumoQ.ncsAbertas ? '' : 'feito')) + '" id="btn-ncs">' +
         '<div class="info"><div class="titulo">Não conformidades</div>' +
         '<div class="detalhe">' + resumoQ.ncsAbertas + ' aberta(s)' + (resumoQ.ncsVencidas ? ' · ' + resumoQ.ncsVencidas + ' com prazo vencido' : '') + '</div></div>' +
-        '<span class="etiqueta ' + (resumoQ.ncsVencidas ? 'nc' : (resumoQ.ncsAbertas ? 'pendente' : 'feito')) + '">' + resumoQ.ncsAbertas + '</span></button>';
+        '<span class="etiqueta ' + (resumoQ.ncsVencidas ? 'nc' : (resumoQ.ncsAbertas ? 'pendente' : 'feito')) + '">' + resumoQ.ncsAbertas + '</span></button>' +
+        '<button class="cartao-controle feito" id="btn-pdf">' +
+        '<div class="info"><div class="titulo">Gerar PDF para a Vigilância</div>' +
+        '<div class="detalhe">Uma ficha por mês, no formato de papel, com as NCs</div></div>' +
+        '<span class="seta">›</span></button>';
     }
 
     // Admin
@@ -867,6 +872,8 @@
     if (btnAcessos) btnAcessos.addEventListener('click', function () { ir('acessos'); });
     const btnFila = $('#btn-fila');
     if (btnFila) btnFila.addEventListener('click', function () { ir('fila'); });
+    const btnPdf = $('#btn-pdf');
+    if (btnPdf) btnPdf.addEventListener('click', function () { ir('pdf'); });
     const btnNcs = $('#btn-ncs');
     if (btnNcs) btnNcs.addEventListener('click', function () { ir('ncs', { situacao: 'ABERTAS' }); });
     $('#btn-historico').addEventListener('click', function () { ir('historico'); });
@@ -2099,6 +2106,73 @@
         destravarBotao(botao);
         $('#msg').innerHTML = aviso('erro', e.message);
         window.scrollTo(0, 0);
+      }
+    });
+  };
+
+  // =================================================================
+  // TELA: GERAR PDF (Qualidade)
+  // =================================================================
+
+  const gerados = [];   // PDFs gerados nesta sessão do app
+
+  TELAS.pdf = async function () {
+    carregando();
+    const fichas = await api('listarFichasPdf');
+    const mesAtual = hojeISO().slice(0, 7);
+
+    const grupos = [];
+    fichas.forEach(function (f, i) {
+      let g = grupos.filter(function (x) { return x.nome === f.grupo; })[0];
+      if (!g) { g = { nome: f.grupo, itens: [] }; grupos.push(g); }
+      g.itens.push({ f: f, i: i });
+    });
+
+    let html = '<h1>Gerar PDF</h1>' +
+      '<p class="sub">Escolha a ficha e o mês. O PDF fica salvo no Drive, na pasta "Controle Operacional — PDFs".</p>' +
+      '<div id="msg"></div>' +
+      '<div class="campo"><label for="ficha">Ficha</label><select id="ficha">' +
+      grupos.map(function (g) {
+        return '<optgroup label="' + esc(g.nome) + '">' +
+          g.itens.map(function (x) { return '<option value="' + x.i + '">' + esc(x.f.rotulo) + '</option>'; }).join('') +
+          '</optgroup>';
+      }).join('') +
+      '</select></div>' +
+      '<div class="campo"><label for="mes">Mês</label><input id="mes" type="month" value="' + mesAtual + '" max="' + mesAtual + '"></div>' +
+      '<button class="btn btn-principal" id="btn-gerar">Gerar PDF</button>' +
+      '<div id="lista-gerados"></div>';
+    app.innerHTML = html;
+
+    function desenharGerados() {
+      $('#lista-gerados').innerHTML = gerados.length
+        ? '<h2>Gerados agora</h2><div class="card">' + gerados.map(function (g) {
+          return '<div class="linha-hist"><div>' + esc(g.nome) +
+            '<div class="quando">' + g.registros + ' registro(s) · ' + g.ncs + ' NC(s)</div></div>' +
+            '<a class="btn btn-secundario" style="width:auto;margin:0;padding:10px 14px" href="' + esc(g.url) + '" target="_blank" rel="noopener">Abrir</a></div>';
+        }).join('') + '</div>'
+        : '';
+    }
+    desenharGerados();
+
+    const botao = $('#btn-gerar');
+    botao.addEventListener('click', async function () {
+      const f = fichas[Number($('#ficha').value)];
+      const periodo = $('#mes').value;
+      if (!f || !periodo) { $('#msg').innerHTML = aviso('erro', 'Escolha a ficha e o mês.'); return; }
+
+      travarBotao(botao, 'Gerando PDF… (pode levar alguns segundos)');
+      $('#msg').innerHTML = '';
+      try {
+        const r = await api('gerarPdf', { ficha: f.ficha, id_ativo: f.id_ativo, periodo: periodo });
+        gerados.unshift(r);
+        desenharGerados();
+        $('#msg').innerHTML = r.registros
+          ? aviso('ok', 'PDF pronto: ' + r.nome)
+          : aviso('alerta', 'PDF gerado, mas não há registros desta ficha em ' + periodo + '. Confira a ficha e o mês.');
+      } catch (e) {
+        $('#msg').innerHTML = aviso('erro', e.message);
+      } finally {
+        destravarBotao(botao);
       }
     });
   };
