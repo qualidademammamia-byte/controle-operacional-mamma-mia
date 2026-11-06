@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v10: menu com atalho para a OS e equipe por setor)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v10: menu antes do login — pessoas por setor e atalho para a OS)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -96,6 +96,7 @@
   const URL_OS = 'https://script.google.com/macros/s/AKfycbxN_cFnGJpZgwVaCAegqB0HwrBsw_wKQd56wXyeq3RK5LZbumHrFaudxu9VjQMPBuOauQ/exec?tela=';
 
   const NOMES_SETOR = {
+    QUALIDADE: 'Qualidade',
     MOTORISTA: 'Motorista',
     ESTOQUE: 'Estoque',
     PRODUCAO: 'Produção',
@@ -475,22 +476,52 @@
       erroLista = ehErroDeRede(e) ? 'Sem internet. Conecte-se para entrar.' : e.message;
     }
 
+    // Agrupa os nomes por setor (quem está em 2 setores aparece nos 2)
+    const grupos = {};
+    nomes.forEach(function (u) {
+      const setores = u.setores && u.setores.length ? u.setores : ['SEM_SETOR'];
+      setores.forEach(function (d) { (grupos[d] = grupos[d] || []).push(u); });
+    });
+    const ordem = Object.keys(NOMES_SETOR).filter(function (d) { return grupos[d]; })
+      .concat(Object.keys(grupos).filter(function (d) { return !NOMES_SETOR[d] && d !== 'SEM_SETOR'; }))
+      .concat(grupos.SEM_SETOR ? ['SEM_SETOR'] : []);
+
+    function botaoNome(u) {
+      return '<button class="item-lista" data-id="' + esc(u.id) + '" data-nome="' + esc(u.nome) + '" data-status="' + esc(u.status) + '">' +
+        '<span>' + esc(u.nome) + '</span>' +
+        (u.status === 'PENDENTE' ? '<span class="etiqueta aguardando">aguardando</span>' : '<span>›</span>') +
+        '</button>';
+    }
+
+    const estiloResumo = 'display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer;list-style:none;font-weight:700;min-height:28px';
+
     app.innerHTML =
-      '<h1>Entrar</h1>' +
-      '<p class="sub">Toque no seu nome.</p>' +
+      '<h1>Bem-vindo</h1>' +
+      '<p class="sub">Entre com o seu nome ou abra uma ordem de serviço.</p>' +
+      '<button class="cartao-controle feito" id="login-os">' +
+      '<div class="info"><div class="titulo">Ordem de Serviço</div>' +
+      '<div class="detalhe">Abrir uma OS de manutenção, sem precisar entrar</div></div>' +
+      '<span class="seta">↗</span></button>' +
+      '<h2>Entrar</h2>' +
       (erroLista ? aviso('erro', erroLista) : '') +
-      (ultimo ? '<button class="item-lista" data-id="' + esc(ultimo.id) + '" data-nome="' + esc(ultimo.nome) + '"><strong>Continuar como ' + esc(ultimo.nome) + '</strong><span>›</span></button><h2>Outra pessoa</h2>' : '') +
+      (ultimo ? '<div class="lista" style="margin-bottom:12px"><button class="item-lista" data-id="' + esc(ultimo.id) + '" data-nome="' + esc(ultimo.nome) + '"><strong>Continuar como ' + esc(ultimo.nome) + '</strong><span>›</span></button></div>' : '') +
       (nomes.length > 8 ? '<div class="campo"><input id="busca" type="search" placeholder="Buscar nome" autocomplete="off"></div>' : '') +
-      '<div class="lista" id="lista-nomes">' +
-      nomes.map(function (u) {
-        return '<button class="item-lista" data-id="' + esc(u.id) + '" data-nome="' + esc(u.nome) + '" data-status="' + esc(u.status) + '">' +
-          '<span>' + esc(u.nome) + '</span>' +
-          (u.status === 'PENDENTE' ? '<span class="etiqueta aguardando">aguardando</span>' : '<span>›</span>') +
-          '</button>';
+      (nomes.length ? '<p class="sub" style="margin-bottom:8px">' + (ultimo ? 'Outra pessoa? ' : '') + 'Toque no seu setor e depois no seu nome.</p>' : '') +
+      '<style>#lista-nomes summary::-webkit-details-marker{display:none}#lista-nomes details[open] summary{color:var(--dourado-escuro)}</style>' +
+      '<div id="lista-nomes">' +
+      ordem.map(function (d) {
+        const nome = NOMES_SETOR[d] || (d === 'SEM_SETOR' ? 'Sem setor' : d);
+        return '<details class="card" data-setor="' + esc(d) + '" style="padding:12px 14px">' +
+          '<summary style="' + estiloResumo + '"><span>' + esc(nome) + '</span>' +
+          '<span class="etiqueta aguardando">' + grupos[d].length + '</span></summary>' +
+          '<div class="lista" style="margin-top:10px">' + grupos[d].map(botaoNome).join('') + '</div>' +
+          '</details>';
       }).join('') +
       '</div>' +
       '<button class="btn btn-secundario" id="btn-primeiro-acesso" style="margin-top:20px">Primeiro acesso: fazer meu cadastro</button>' +
       '<p class="rodape">Mamma Mia Salgados · Controle Operacional</p>';
+
+    $('#login-os').addEventListener('click', abrirOs);
 
     $$('.item-lista').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -499,13 +530,21 @@
       });
     });
 
+    // Busca: abre todos os setores e mostra só os nomes que batem
     const busca = $('#busca');
     if (busca) {
+      const semAcento = function (t) { return String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); };
       busca.addEventListener('input', function () {
-        const termo = busca.value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-        $$('#lista-nomes .item-lista').forEach(function (b) {
-          const nome = b.getAttribute('data-nome').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-          b.style.display = nome.indexOf(termo) !== -1 ? '' : 'none';
+        const termo = semAcento(busca.value.trim());
+        $$('#lista-nomes details').forEach(function (g) {
+          let algum = false;
+          g.querySelectorAll('.item-lista').forEach(function (b) {
+            const bate = !termo || semAcento(b.getAttribute('data-nome')).indexOf(termo) !== -1;
+            b.style.display = bate ? '' : 'none';
+            if (bate) algum = true;
+          });
+          g.style.display = algum ? '' : 'none';
+          g.open = !!termo && algum;
         });
       });
     }
