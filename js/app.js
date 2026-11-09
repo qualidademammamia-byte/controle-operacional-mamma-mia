@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v10: menu antes do login — pessoas por setor e atalho para a OS)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v11: atalho para o Painel de Validade / etiquetas)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -94,6 +94,9 @@
 
   // App de Ordem de Serviço (manutenção), aberto pelo menu
   const URL_OS = 'https://script.google.com/macros/s/AKfycbxN_cFnGJpZgwVaCAegqB0HwrBsw_wKQd56wXyeq3RK5LZbumHrFaudxu9VjQMPBuOauQ/exec?tela=';
+
+  // Painel de Validade (emissão de etiquetas), aberto pela entrada e pelo menu
+  const URL_VALIDADE = 'https://script.google.com/macros/s/AKfycbxtnqmdKF6EX-D6iCvpdvGTAP6bik2b3wT5Db1lCeNeK7XFf7pKqV3i8JiriaDOqQ5j/exec';
 
   const NOMES_SETOR = {
     QUALIDADE: 'Qualidade',
@@ -445,10 +448,12 @@
     irRaiz('login');
   }
 
-  function abrirOs() {
-    const janela = window.open(URL_OS, '_blank', 'noopener');
-    if (!janela) window.location.href = URL_OS;   // celular que bloqueia nova aba
+  function abrirLink(url) {
+    const janela = window.open(url, '_blank', 'noopener');
+    if (!janela) window.location.href = url;   // celular que bloqueia nova aba
   }
+  function abrirOs() { abrirLink(URL_OS); }
+  function abrirValidade() { abrirLink(URL_VALIDADE); }
 
   function confirmarSaidaComFila() {
     toast('Há registros guardados sem envio. Conecte à internet antes de sair.', 'erro');
@@ -497,10 +502,14 @@
 
     app.innerHTML =
       '<h1>Bem-vindo</h1>' +
-      '<p class="sub">Entre com o seu nome ou abra uma ordem de serviço.</p>' +
+      '<p class="sub">Entre com o seu nome ou use um dos atalhos.</p>' +
       '<button class="cartao-controle feito" id="login-os">' +
       '<div class="info"><div class="titulo">Ordem de Serviço</div>' +
       '<div class="detalhe">Abrir uma OS de manutenção, sem precisar entrar</div></div>' +
+      '<span class="seta">↗</span></button>' +
+      '<button class="cartao-controle feito" id="login-validade">' +
+      '<div class="info"><div class="titulo">Etiquetas de validade</div>' +
+      '<div class="detalhe">Painel de validade para emitir etiquetas</div></div>' +
       '<span class="seta">↗</span></button>' +
       '<h2>Entrar</h2>' +
       (erroLista ? aviso('erro', erroLista) : '') +
@@ -524,6 +533,7 @@
       '<a href="mailto:qualidade@mammamiasalgados.com.br" style="color:var(--dourado-escuro)">qualidade@mammamiasalgados.com.br</a></p>';
 
     $('#login-os').addEventListener('click', abrirOs);
+    $('#login-validade').addEventListener('click', abrirValidade);
 
     $$('.item-lista').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -1903,6 +1913,10 @@
       '<div class="info"><div class="titulo">Ordem de Serviço</div>' +
       '<div class="detalhe">Abrir uma OS de manutenção (abre o app de OS)</div></div>' +
       '<span class="seta">↗</span></button>' +
+      '<button class="cartao-controle feito" id="menu-validade">' +
+      '<div class="info"><div class="titulo">Etiquetas de validade</div>' +
+      '<div class="detalhe">Painel de validade para emitir etiquetas (abre o painel)</div></div>' +
+      '<span class="seta">↗</span></button>' +
       '<button class="cartao-controle feito" id="menu-historico">' +
       '<div class="info"><div class="titulo">Meu histórico</div>' +
       '<div class="detalhe">Os seus registros dos últimos 30 dias</div></div>' +
@@ -1917,6 +1931,7 @@
     app.innerHTML = html;
 
     $('#menu-os').addEventListener('click', abrirOs);
+    $('#menu-validade').addEventListener('click', abrirValidade);
     $('#menu-historico').addEventListener('click', function () { ir('historico'); });
     $('#menu-pin').addEventListener('click', function () { ir('trocarPin', { obrigatorio: false }); });
     $('#menu-sair').addEventListener('click', sair);
