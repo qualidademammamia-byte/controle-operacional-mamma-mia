@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v11: atalho para o Painel de Validade / etiquetas)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v12: fila sem unidade repetida)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -2075,13 +2075,27 @@
       return;
     }
 
+    // Linha "onde · quem · quando" sem repetir o nome do controle nem a unidade
+    function linhaOrigem(r) {
+      const unidade = String(r.id_unidade || '').trim();
+      let ativo = String(r.ativo || '').trim();
+      const semUnidade = unidade ? ativo.replace(new RegExp('\\s*[—–-]\\s*' + unidade.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'), '') : ativo;
+      if (semUnidade.toLowerCase() === String(r.modelo || '').trim().toLowerCase()) ativo = '';
+      const partes = [];
+      if (ativo) partes.push(ativo);
+      if (unidade && ativo.toUpperCase().indexOf(unidade.toUpperCase()) === -1) partes.push(unidade);
+      if (r.autor_nome) partes.push(r.autor_nome);
+      if (r.carimbo) partes.push(r.carimbo);
+      return partes.join(' · ');
+    }
+
     fila.forEach(function (r, i) {
       html += '<div class="card" data-reg="' + i + '">' +
         '<div style="display:flex;justify-content:space-between;gap:10px"><strong>' + esc(r.modelo) + '</strong>' +
         '<span class="etiqueta aguardando">' + esc(dataBR(r.data_ref)) + '</span></div>' +
         '<div style="font-size:18px;margin:6px 0">' + esc(r.titulo) + '</div>' +
         '<div class="sub" style="margin:0 0 6px;font-size:14px">' + esc(r.detalhe) + '</div>' +
-        '<div class="sub" style="margin:0;font-size:14px">' + esc(r.ativo) + ' · ' + esc(r.id_unidade) + ' · ' + esc(r.autor_nome) + (r.carimbo ? ' · ' + esc(r.carimbo) : '') + '</div>' +
+        '<div class="sub" style="margin:0;font-size:14px">' + esc(linhaOrigem(r)) + '</div>' +
         (r.observacao ? '<div class="aviso info" style="margin:10px 0 0">Obs.: ' + esc(r.observacao) + '</div>' : '') +
         (r.evidencia_url ? '<a href="' + esc(r.evidencia_url) + '" target="_blank" rel="noopener" class="btn-link" style="display:block;text-align:left">Ver foto</a>' : '') +
         (r.reinspecao_de ? '<div class="aviso alerta" style="margin:10px 0 0">Reinspeção da ' + esc(r.reinspecao_de) + '</div>' : '');
