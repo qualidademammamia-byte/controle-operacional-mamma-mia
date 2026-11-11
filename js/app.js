@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v12: fila sem unidade repetida)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v13: correção da Qualidade no monitoramento — lançar dia anterior)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -1563,7 +1563,11 @@
   TELAS.monitoramento = async function (p) {
     carregando();
     const idModelo = p.id_modelo || 'MON_HIGIENE';
-    const dados = await api('checklistHigiene', { id_ativo: p.id_ativo, id_modelo: idModelo });
+    // Correção da Qualidade: p.data_correcao = 'yyyy-MM-dd' de um dia anterior
+    const correcao = p.data_correcao || '';
+    const dados = await api('checklistHigiene', correcao
+      ? { id_ativo: p.id_ativo, id_modelo: idModelo, data: correcao }
+      : { id_ativo: p.id_ativo, id_modelo: idModelo });
     const horaInicio = horaAgora();       // início = quando o checklist foi aberto
     const idCliente = uuid();
     const pendentesHoje = dados.hoje.filter(function (v) { return !v.feita; });
@@ -1571,12 +1575,34 @@
 
     const estiloBtn = 'min-height:44px;padding:6px;font-size:15px';
     let html = '<h1>' + esc(dados.nome || 'Monitoramento de higiene') + '</h1>' +
-      '<p class="sub">' + esc(p.id_unidade || '') + ' · início ' + esc(horaInicio) + ' · C = Conforme · NC = Não Conforme · SA = Sem Atividade</p>';
+      (correcao
+        ? '<p class="sub">' + esc(p.id_unidade || '') + ' · <strong>correção da Qualidade — dia ' + esc(dataBR(correcao)) + '</strong> · C = Conforme · NC = Não Conforme · SA = Sem Atividade</p>'
+        : '<p class="sub">' + esc(p.id_unidade || '') + ' · início ' + esc(horaInicio) + ' · C = Conforme · NC = Não Conforme · SA = Sem Atividade</p>');
+
+    // Botão e painel da correção (só Qualidade/Admin, fora do modo correção)
+    const htmlCorrecao = (dados.podeCorrigir && !correcao)
+      ? '<details class="card" id="bloco-correcao" style="margin-top:16px"><summary style="cursor:pointer;font-weight:600">Lançar verificação de outro dia (correção da Qualidade)</summary>' +
+        '<p class="sub" style="margin:8px 0">Use quando a verificação foi feita no dia, mas não ficou registrada no app. Até ' + esc(dados.diasCorrecao || 7) + ' dias atrás, com justificativa.</p>' +
+        '<div class="campo"><label for="data-correcao">Dia da verificação</label>' +
+        '<input type="date" id="data-correcao" min="' + hojeISO(-(dados.diasCorrecao || 7)) + '" max="' + hojeISO(-1) + '" value="' + hojeISO(-1) + '"></div>' +
+        '<button type="button" class="btn btn-secundario" id="btn-correcao">Continuar</button></details>'
+      : '';
+    function ligarCorrecao() {
+      const b = $('#btn-correcao');
+      if (!b) return;
+      b.addEventListener('click', function () {
+        const data = $('#data-correcao').value;
+        if (!data || data >= hojeISO()) { toast('Escolha um dia anterior a hoje.', 'erro'); return; }
+        ir('monitoramento', Object.assign({}, p, { data_correcao: data }));
+      });
+    }
 
     if (!pendentesHoje.length) {
-      app.innerHTML = html + aviso('ok', 'As ' + dados.vezesPorDia + ' verificações de hoje já foram registradas nesta área.') +
-        '<button class="btn btn-secundario" id="btn-voltar-inicio">Voltar ao início</button>';
+      app.innerHTML = html + aviso('ok', 'As ' + dados.vezesPorDia + ' verificações ' +
+        (correcao ? 'do dia ' + esc(dataBR(correcao)) : 'de hoje') + ' já foram registradas nesta área.') +
+        '<button class="btn btn-secundario" id="btn-voltar-inicio">Voltar ao início</button>' + htmlCorrecao;
       $('#btn-voltar-inicio').addEventListener('click', function () { irRaiz('inicio'); });
+      ligarCorrecao();
       return;
     }
 
@@ -1590,6 +1616,13 @@
       '<div class="campo"><label>Qual verificação do dia?</label>' +
       htmlOpcoes('verif', pendentesHoje.map(function (v) { return [String(v.verificacao), v.verificacao + 'ª verificação']; }), [String(pendentesHoje[0].verificacao)]) +
       '</div>' +
+      (correcao
+        ? '<div class="aviso alerta">Correção da Qualidade: esta verificação vai entrar no dia <strong>' + esc(dataBR(correcao)) + '</strong>, com a sua justificativa.</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+          '<div class="campo"><label for="hora-ini-corr">Início</label><input type="time" id="hora-ini-corr"></div>' +
+          '<div class="campo"><label for="hora-fim-corr">Fim</label><input type="time" id="hora-fim-corr"></div></div>' +
+          '<div class="campo"><label for="justificativa">Justificativa</label><textarea id="justificativa" placeholder="Ex.: verificação feita no dia, mas não ficou salva no app"></textarea></div>'
+        : '') +
       '<div class="aviso info" id="progresso">0 de ' + totalItens + ' itens respondidos</div>';
 
     dados.setores.forEach(function (s) {
@@ -1615,10 +1648,12 @@
     });
 
     html += '<div class="campo"><label for="obs">Observação geral (opcional)</label><textarea id="obs"></textarea></div>' +
-      '<button class="btn btn-principal" id="btn-salvar">Registrar verificação</button>';
+      '<button class="btn btn-principal" id="btn-salvar">' + (correcao ? 'Registrar correção do dia ' + esc(dataBR(correcao)) : 'Registrar verificação') + '</button>' +
+      htmlCorrecao;
     app.innerHTML = html;
 
     ligarOpcoes('verif', false);
+    ligarCorrecao();
 
     function atualizarProgresso() {
       let respondidos = 0;
@@ -1687,18 +1722,37 @@
       }
       if (erroNc) { $('#msg').innerHTML = aviso('erro', erroNc); window.scrollTo(0, 0); return; }
 
+      const envio = {
+        id_modelo: idModelo,
+        id_ativo: p.id_ativo,
+        verificacao: Number(valorOpcao('verif')),
+        hora_inicio: horaInicio,
+        respostas: respostas,
+        ncs: ncs,
+        observacao: $('#obs').value,
+        id_cliente: idCliente
+      };
+      if (correcao) {
+        const ini = $('#hora-ini-corr').value;
+        const fim = $('#hora-fim-corr').value;
+        const just = $('#justificativa').value.trim();
+        let erroCorr = '';
+        if (!ini || !fim) erroCorr = 'Informe o horário de início e de fim da verificação.';
+        else if (fim < ini) erroCorr = 'O horário de fim não pode ser antes do início.';
+        else if (just.length < 10) erroCorr = 'Escreva a justificativa da correção.';
+        if (erroCorr) { $('#msg').innerHTML = aviso('erro', erroCorr); window.scrollTo(0, 0); return; }
+        envio.hora_inicio = ini;
+        envio.hora_fim = fim;
+        envio.justificativa = just;
+        envio.data_lancamento = correcao;
+      }
+
       travarBotao(botao, 'Registrando…');
       try {
-        const r = await enviarRegistro('registrarHigiene', {
-          id_modelo: idModelo,
-          id_ativo: p.id_ativo,
-          verificacao: Number(valorOpcao('verif')),
-          hora_inicio: horaInicio,
-          respostas: respostas,
-          ncs: ncs,
-          observacao: $('#obs').value,
-          id_cliente: idCliente
-        });
+        // A correção precisa de internet (não vai para a fila do celular)
+        const r = correcao
+          ? { dados: await api('registrarHigiene', envio) }
+          : await enviarRegistro('registrarHigiene', envio);
         if (r.guardado) {
           toast('Sem internet: verificação guardada no celular. Será enviada sozinha.', 'ok');
         } else if (r.dados.duplicado) {
@@ -1706,7 +1760,8 @@
         } else {
           const t = r.dados.monitoramento.totais;
           const abertas = r.dados.monitoramento.ncsAbertas;
-          toast('Registrada: ' + t.C + ' C · ' + t.NC + ' NC · ' + t.SA + ' SA' + (abertas.length ? ' · ' + abertas.join(', ') + ' aberta(s)' : ''), t.NC ? 'erro' : 'ok');
+          toast((correcao ? 'Correção do dia ' + dataBR(correcao) + ' registrada: ' : 'Registrada: ') +
+            t.C + ' C · ' + t.NC + ' NC · ' + t.SA + ' SA' + (abertas.length ? ' · ' + abertas.join(', ') + ' aberta(s)' : ''), t.NC ? 'erro' : 'ok');
         }
         irRaiz('inicio');
       } catch (e) {
