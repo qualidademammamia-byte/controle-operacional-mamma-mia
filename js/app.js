@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v13: correção da Qualidade no monitoramento — lançar dia anterior)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v14: receita da cocção — descrever na 1ª produção e validar a cada 3)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -1468,6 +1468,15 @@
 
       travarBotao(botao, 'Registrando…');
       try {
+        // Cocção nova: a receita está em dia? (descrever na 1ª, validar a cada 3)
+        if (!continuacao) {
+          const sit = await api('situacaoReceita', { id_ativo: p.id_ativo, preparacao: dados.preparacao });
+          if (sit.acao !== 'OK') {
+            destravarBotao(botao);
+            ir('receitaCoccao', { situacao: sit, dadosCoccao: dados, id_ativo: p.id_ativo, id_unidade: p.id_unidade });
+            return;
+          }
+        }
         const r = await api('registrarCoccao', dados);
         estado.pilha.pop();
         ir('resultadoCoccao', { coccao: r.coccao, id_ativo: p.id_ativo, id_unidade: p.id_unidade, temperaturasAntes: p.temperaturas || [] });
@@ -1476,6 +1485,142 @@
         $('#msg').innerHTML = aviso('erro', ehErroDeRede(e)
           ? 'Sem internet. A cocção precisa de conexão para registrar. Anote a temperatura e a hora e registre assim que a internet voltar.'
           : e.message);
+        window.scrollTo(0, 0);
+      }
+    });
+  };
+
+  // =================================================================
+  // TELA: RECEITA DA COCÇÃO (descrever na 1ª produção / validar a cada 3)
+  // =================================================================
+
+  TELAS.receitaCoccao = function (p) {
+    const sit = p.situacao;
+    const descrever = sit.acao === 'DESCREVER';
+    const unidades = sit.unidadesMedida || ['KG', 'G', 'L', 'ML', 'UN', 'PAC', 'CX'];
+    const idCliente = uuid();
+
+    function selUnidade(valor) {
+      return '<select class="un">' + unidades.map(function (u) {
+        return '<option' + (u === valor ? ' selected' : '') + '>' + u + '</option>';
+      }).join('') + '</select>';
+    }
+    function linhaLivre() {
+      return '<div class="linha-ing livre">' +
+        '<input class="nome" placeholder="Ingrediente" autocapitalize="characters" autocomplete="off">' +
+        '<input class="qtd" inputmode="decimal" placeholder="Qtd" autocomplete="off">' + selUnidade('KG') +
+        '<button type="button" class="tirar" aria-label="Tirar linha">×</button></div>';
+    }
+
+    let html = '<style>' +
+      '.linha-ing{display:grid;grid-template-columns:1fr 78px 72px 36px;gap:6px;margin-bottom:8px;align-items:center}' +
+      '.linha-ing.fixa{grid-template-columns:1fr 78px 72px}' +
+      '.linha-ing input,.linha-ing select{min-height:46px;font-size:16px;padding:6px 8px;border:1px solid var(--borda,#ddd);border-radius:10px;width:100%;box-sizing:border-box;background:#fff}' +
+      '.linha-ing .rotulo{font-weight:600;font-size:15px;line-height:1.2}' +
+      '.linha-ing .tirar{min-height:46px;border:0;background:transparent;font-size:24px;color:var(--vermelho,#b3261e)}' +
+      '</style>';
+
+    if (descrever) {
+      html += '<h1>Receita de ' + esc(sit.preparacao) + '</h1>' +
+        '<p class="sub">1ª produção desta preparação na ' + esc(sit.id_unidade) + '. Descreva a receita de <strong>1 batida</strong>: ' +
+        'ingrediente, quantidade e unidade. Ela vale como padrão e vai para a Qualidade conferir.</p>';
+    } else {
+      html += '<h1>Conferência da receita</h1>' +
+        '<p class="sub"><strong>' + esc(sit.preparacao) + '</strong> · ' + sit.producao + 'ª produção. ' +
+        'Informe o que você <strong>usou de verdade</strong> nesta produção. Não usou algum? Coloque 0.</p>';
+    }
+    html += '<div id="msg"></div>';
+
+    if (!descrever) {
+      html += '<div class="campo"><label for="batidas">Quantas batidas você fez?</label>' +
+        '<input id="batidas" class="grande" inputmode="decimal" placeholder="1" autocomplete="off">' +
+        '<div class="ajuda">Receita dobrada = 2. Meia receita = 0,5.</div></div>' +
+        '<div class="card"><strong>Ingredientes da receita</strong><div style="margin-top:10px" id="fixos">' +
+        (sit.receita ? sit.receita.ingredientes : []).map(function (i, n) {
+          return '<div class="linha-ing fixa" data-nome="' + esc(i.ingrediente) + '">' +
+            '<div class="rotulo">' + esc(i.ingrediente) + '</div>' +
+            '<input class="qtd" inputmode="decimal" placeholder="Qtd" autocomplete="off">' + selUnidade(i.unidade) + '</div>';
+        }).join('') + '</div></div>' +
+        '<div class="card"><strong>Usou algo que não está na receita?</strong><div style="margin-top:10px" id="livres"></div>' +
+        '<button type="button" class="btn btn-secundario" id="btn-mais">+ Incluir ingrediente</button></div>';
+    } else {
+      html += '<div class="card"><div id="livres">' + linhaLivre() + linhaLivre() + linhaLivre() + linhaLivre() + '</div>' +
+        '<button type="button" class="btn btn-secundario" id="btn-mais">+ Ingrediente</button></div>';
+    }
+    html += '<div class="campo"><label for="obs-rec">Observação (opcional)</label><textarea id="obs-rec"></textarea></div>' +
+      '<button class="btn btn-principal" id="btn-salvar">' + (descrever ? 'Salvar receita' : 'Salvar conferência') + ' e registrar a temperatura</button>';
+    app.innerHTML = html;
+
+    $('#btn-mais').addEventListener('click', function () {
+      $('#livres').insertAdjacentHTML('beforeend', linhaLivre());
+      const linhas = $$('#livres .linha-ing');
+      linhas[linhas.length - 1].querySelector('.nome').focus();
+    });
+    $('#livres').addEventListener('click', function (ev) {
+      if (ev.target.classList.contains('tirar')) ev.target.parentNode.remove();
+    });
+    app.addEventListener('input', function (ev) {
+      if (ev.target.classList && (ev.target.classList.contains('qtd') || ev.target.id === 'batidas')) {
+        ev.target.value = ev.target.value.replace(/[^0-9.,]/g, '').replace('.', ',');
+      }
+    });
+
+    function numero(texto) {
+      const t = String(texto || '').trim().replace(',', '.');
+      return t === '' ? null : Number(t);
+    }
+    function lerLivres() {
+      return $$('#livres .linha-ing').map(function (l) {
+        return { ingrediente: l.querySelector('.nome').value.trim(), quantidade: numero(l.querySelector('.qtd').value), unidade: l.querySelector('.un').value };
+      }).filter(function (i) { return i.ingrediente || i.quantidade; });
+    }
+
+    const botao = $('#btn-salvar');
+    botao.addEventListener('click', async function () {
+      const envio = { id_ativo: p.id_ativo, preparacao: sit.preparacao, observacao: $('#obs-rec').value, id_cliente: idCliente };
+      let erro = '';
+      if (descrever) {
+        envio.tipo = 'RECEITA';
+        envio.itens = lerLivres();
+        if (!envio.itens.length) erro = 'Informe os ingredientes da receita.';
+        envio.itens.forEach(function (i) {
+          if (!erro && !i.ingrediente) erro = 'Falta o nome de um ingrediente.';
+          if (!erro && !(i.quantidade > 0)) erro = i.ingrediente + ': informe a quantidade.';
+        });
+      } else {
+        envio.tipo = 'VALIDACAO';
+        envio.batidas = numero($('#batidas').value);
+        if (!(envio.batidas > 0)) erro = 'Informe quantas batidas você fez.';
+        const fixos = $$('#fixos .linha-ing').map(function (l) {
+          return { ingrediente: l.getAttribute('data-nome'), quantidade: numero(l.querySelector('.qtd').value), unidade: l.querySelector('.un').value };
+        });
+        fixos.forEach(function (i) {
+          if (!erro && (i.quantidade === null || isNaN(i.quantidade))) erro = i.ingrediente + ': informe quanto usou (0 se não usou).';
+        });
+        const livres = lerLivres();
+        livres.forEach(function (i) {
+          if (!erro && !i.ingrediente) erro = 'Falta o nome do ingrediente incluído.';
+          if (!erro && !(i.quantidade > 0)) erro = i.ingrediente + ': informe a quantidade.';
+        });
+        envio.usados = fixos.concat(livres);
+      }
+      if (erro) { $('#msg').innerHTML = aviso('erro', erro); window.scrollTo(0, 0); return; }
+
+      travarBotao(botao, 'Salvando…');
+      try {
+        const r = await api('registrarReceita', envio);
+        if (r.receita && r.receita.diferencas && r.receita.diferencas.length) {
+          toast('Diferença na receita: a Qualidade foi avisada (' + (r.receita.nc || 'NC aberta') + ').', 'erro');
+        } else {
+          toast(descrever ? 'Receita salva. A Qualidade vai conferir.' : 'Conferência ok: igual à receita.', 'ok');
+        }
+        const rc = await api('registrarCoccao', p.dadosCoccao);
+        estado.pilha.pop();   // tela da receita
+        estado.pilha.pop();   // tela da cocção
+        ir('resultadoCoccao', { coccao: rc.coccao, id_ativo: p.id_ativo, id_unidade: p.id_unidade, temperaturasAntes: [] });
+      } catch (e) {
+        destravarBotao(botao);
+        $('#msg').innerHTML = aviso('erro', ehErroDeRede(e) ? 'Sem internet. Tente de novo quando a conexão voltar.' : e.message);
         window.scrollTo(0, 0);
       }
     });
