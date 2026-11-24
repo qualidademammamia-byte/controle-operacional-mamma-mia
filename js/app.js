@@ -1,5 +1,5 @@
 /**
- * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v14: receita da cocção — descrever na 1ª produção e validar a cada 3)
+ * MAMMA MIA CONTROLE OPERACIONAL — js/app.js (v15: tela Receitas da Qualidade)
  * ------------------------------------------------------------------
  * Telas e lógica do app (sem build: a Vercel publica este arquivo direto).
  *
@@ -853,6 +853,10 @@
         '<button class="cartao-controle feito" id="btn-pdf">' +
         '<div class="info"><div class="titulo">PDF das fichas</div>' +
         '<div class="detalhe">Para Vigilância, clientes e auditorias · uma ficha por mês, com as NCs</div></div>' +
+        '<span class="seta">›</span></button>' +
+        '<button class="cartao-controle feito" id="btn-receitas">' +
+        '<div class="info"><div class="titulo">Receitas da cocção</div>' +
+        '<div class="detalhe">Ingredientes, quantidades e conferências de cada preparação</div></div>' +
         '<span class="seta">›</span></button>';
     }
 
@@ -956,6 +960,8 @@
     if (btnFila) btnFila.addEventListener('click', function () { ir('fila'); });
     const btnPdf = $('#btn-pdf');
     if (btnPdf) btnPdf.addEventListener('click', function () { ir('pdf'); });
+    const btnReceitas = $('#btn-receitas');
+    if (btnReceitas) btnReceitas.addEventListener('click', function () { ir('receitas'); });
     const btnNcs = $('#btn-ncs');
     if (btnNcs) btnNcs.addEventListener('click', function () { ir('ncs', { situacao: 'ABERTAS' }); });
     $('#btn-historico').addEventListener('click', function () { ir('historico'); });
@@ -1470,7 +1476,13 @@
       try {
         // Cocção nova: a receita está em dia? (descrever na 1ª, validar a cada 3)
         if (!continuacao) {
-          const sit = await api('situacaoReceita', { id_ativo: p.id_ativo, preparacao: dados.preparacao });
+          let sit = { acao: 'OK' };
+          try {
+            sit = await api('situacaoReceita', { id_ativo: p.id_ativo, preparacao: dados.preparacao });
+          } catch (eRec) {
+            // Servidor ainda sem as receitas (implantação antiga): segue sem travar a cocção
+            if (eRec.codigo !== 'ACAO_INVALIDA') throw eRec;
+          }
           if (sit.acao !== 'OK') {
             destravarBotao(botao);
             ir('receitaCoccao', { situacao: sit, dadosCoccao: dados, id_ativo: p.id_ativo, id_unidade: p.id_unidade });
@@ -1920,6 +1932,96 @@
   // =================================================================
   // TELA: HISTÓRICO
   // =================================================================
+
+  // =================================================================
+  // TELA: RECEITAS (Qualidade)
+  // =================================================================
+
+  TELAS.receitas = async function (p) {
+    carregando('Carregando receitas…');
+    const dados = await api('listarReceitas');
+    const filtro = { unidade: (p && p.unidade) || '', busca: '' };
+    const SITUACAO = {
+      APROVADA: ['Aprovada', 'feito'],
+      EM_CONFERENCIA: ['Em conferência', 'aguardando'],
+      DESCARTADA: ['Descartada', 'pendente']
+    };
+    const unidades = dados.receitas.map(function (r) { return r.id_unidade; })
+      .filter(function (u, i, l) { return l.indexOf(u) === i; });
+    const qtd = function (n) { return String(Math.round(Number(n) * 1000) / 1000).replace('.', ','); };
+    const semAcento = function (t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase(); };
+
+    function cartao(r) {
+      const sit = SITUACAO[r.situacao] || [r.situacao, ''];
+      let h = '<details class="card receita" style="padding:14px 16px">' +
+        '<summary style="cursor:pointer;list-style:none">' +
+        '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">' +
+        '<div><div style="font-weight:700;font-size:17px">' + esc(r.preparacao) + '</div>' +
+        '<div class="sub" style="margin:4px 0 0;font-size:14px">' + esc(r.id_unidade) + ' · ' + r.itens.length + ' ingrediente(s)' +
+        (r.vigente ? ' · ' + r.producoes + ' produção(ões) · próxima conferência ' + esc(r.proxima) : '') + '</div></div>' +
+        '<span class="etiqueta ' + sit[1] + '" style="white-space:nowrap">' + sit[0] + '</span></div></summary>';
+
+      h += '<table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:15px">' +
+        '<tr><th style="text-align:left;padding:6px 0;border-bottom:1px solid var(--borda,#ddd)">Ingrediente</th>' +
+        '<th style="text-align:right;padding:6px 0;border-bottom:1px solid var(--borda,#ddd)">1 batida</th></tr>' +
+        r.itens.map(function (i) {
+          return '<tr><td style="padding:6px 0;border-bottom:1px solid #eee">' + esc(i.ingrediente) + '</td>' +
+            '<td style="padding:6px 0;border-bottom:1px solid #eee;text-align:right;white-space:nowrap">' + qtd(i.quantidade) + ' ' + esc(i.unidade) + '</td></tr>';
+        }).join('') + '</table>';
+
+      h += '<p class="sub" style="font-size:14px;margin:10px 0 0">Descrita por ' + esc(r.descrita_por) + ' em ' + esc(r.descrita_em) +
+        (r.verificada_por ? '<br>' + (r.situacao === 'DESCARTADA' ? 'Descartada' : 'Aprovada') + ' por ' + esc(r.verificada_por) + ' em ' + esc(r.verificada_em) : '') +
+        (r.observacao ? '<br>Obs.: ' + esc(r.observacao) : '') + '</p>';
+
+      h += '<div style="margin-top:12px;font-weight:600">Conferências (' + r.conferencias.length + ')</div>';
+      if (!r.conferencias.length) {
+        h += '<p class="sub" style="font-size:14px;margin:4px 0 0">Nenhuma ainda.</p>';
+      } else {
+        r.conferencias.forEach(function (c) {
+          h += '<div style="border-top:1px solid #eee;padding:8px 0;font-size:14px">' +
+            '<div><strong>' + esc(c.em) + '</strong> · ' + esc(c.autor) + ' · ' + qtd(c.batidas) + ' batida(s) · ' +
+            (c.conforme ? '<span style="color:var(--verde,#1E9A47);font-weight:600">igual à receita</span>'
+              : '<span style="color:var(--vermelho,#b3261e);font-weight:600">com diferença</span>' +
+                (c.nc ? ' · ' + esc(c.nc.id) + ' (' + esc(String(c.nc.status).toLowerCase()) + ')' : '')) + '</div>' +
+            (c.diferencas.length ? '<ul style="margin:4px 0 0;padding-left:18px">' + c.diferencas.map(function (d) { return '<li>' + esc(d) + '</li>'; }).join('') + '</ul>' : '') +
+            '</div>';
+        });
+      }
+      return h + '</details>';
+    }
+
+    function desenhar() {
+      const lista = dados.receitas.filter(function (r) {
+        return (!filtro.unidade || r.id_unidade === filtro.unidade) &&
+          (!filtro.busca || semAcento(r.preparacao).indexOf(semAcento(filtro.busca)) !== -1);
+      });
+      const ativas = lista.filter(function (r) { return r.situacao !== 'DESCARTADA'; });
+      const descartadas = lista.filter(function (r) { return r.situacao === 'DESCARTADA'; });
+      $('#lista-receitas').innerHTML =
+        (ativas.length ? ativas.map(cartao).join('') : '<p class="sub">Nenhuma receita' + (filtro.busca || filtro.unidade ? ' com esse filtro' : ' registrada ainda') + '.</p>') +
+        (descartadas.length ? '<h2>Descartadas</h2>' + descartadas.map(cartao).join('') : '');
+    }
+
+    app.innerHTML = '<h1>Receitas</h1>' +
+      '<p class="sub">Cocção · conferência a cada ' + dados.aCada + ' produções · tolerância ±' + String(dados.tolerancia).replace('.', ',') + '%</p>' +
+      (unidades.length > 1 ? '<div class="opcoes" data-grupo="un-rec" style="grid-template-columns:repeat(' + (unidades.length + 1) + ',1fr)">' +
+        '<button type="button" class="opcao' + (filtro.unidade ? '' : ' marcada') + '" data-valor="">Todas</button>' +
+        unidades.map(function (u) { return '<button type="button" class="opcao' + (filtro.unidade === u ? ' marcada' : '') + '" data-valor="' + esc(u) + '">' + esc(u) + '</button>'; }).join('') +
+        '</div>' : '') +
+      '<div class="campo"><input id="busca-receita" placeholder="Buscar preparação" autocomplete="off"></div>' +
+      '<div id="lista-receitas"></div>';
+
+    $$('[data-grupo="un-rec"] .opcao').forEach(function (b) {
+      b.addEventListener('click', function () {
+        $$('[data-grupo="un-rec"] .opcao').forEach(function (x) { x.classList.remove('marcada'); });
+        b.classList.add('marcada');
+        filtro.unidade = b.getAttribute('data-valor');
+        desenhar();
+      });
+    });
+    $('#busca-receita').addEventListener('input', function () { filtro.busca = this.value; desenhar(); });
+    desenhar();
+  };
 
   TELAS.historico = async function () {
     carregando();
